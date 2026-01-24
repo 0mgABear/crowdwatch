@@ -9,6 +9,7 @@ import {
 } from "@/lib/rpc";
 import { QRCodeCanvas } from "qrcode.react";
 import { buildPayNowPayload } from "@/lib/paynow";
+import Link from "next/link";
 
 type Seat = { seat_no: number; end_time: string };
 type Visit = {
@@ -140,16 +141,18 @@ export default function DashboardPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drinkProductId]);
 
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold">CrowdWatch</h1>
-        <a className="border rounded px-3 py-2" href="/new-checkin">
+        <Link
+          href="/new-checkin"
+          className="inline-flex items-center justify-center rounded border border-white/20 bg-white/5 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-white/10"
+        >
           New Check In
-        </a>
+        </Link>
       </div>
 
       <div className="space-y-2">
