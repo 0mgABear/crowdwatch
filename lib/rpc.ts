@@ -60,3 +60,15 @@ export async function rpcPurchaseItems(params: {
   if (error) throw error;
   return data as string;
 }
+
+export async function rpcCollectDrink(params: {
+  visitId: string;
+  qty?: number;
+}) {
+  const { data, error } = await supabase.rpc("collect_drink", {
+    p_visit_id: params.visitId,
+    p_qty: params.qty ?? 1,
+  });
+  if (error) throw error;
+  return data as number; // new drinks collected
+}
