@@ -4,9 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import {
   rpcCollectDrink,
-  rpcExtendVisitPartial,
   rpcEndSeat,
-  rpcExtendSeats,
+  rpcExtendSeatsAndCollectPayment,
 } from "@/lib/rpc";
 import { QRCodeCanvas } from "qrcode.react";
 import { buildPayNowPayload } from "@/lib/paynow";
@@ -29,20 +28,20 @@ export default function DashboardPage() {
   const [drinkProductId, setDrinkProductId] = useState<string | null>(null);
 
   async function loadPaynowAndPrices() {
-    const { data: s, error: sErr } = await supabase
+    const { data: s } = await supabase
       .from("settings")
       .select("paynow_uen")
       .eq("id", 1)
       .single();
-    if (!sErr && s?.paynow_uen) setPaynowUen(s.paynow_uen);
+    if (s?.paynow_uen) setPaynowUen(s.paynow_uen);
 
-    const { data: p, error: pErr } = await supabase
+    const { data: p } = await supabase
       .from("products")
       .select("price")
       .eq("name", "Extension hour")
       .eq("active", true)
       .single();
-    if (!pErr && p?.price != null) setExtensionPrice(Number(p.price));
+    if (p?.price != null) setExtensionPrice(Number(p.price));
   }
 
   async function loadDrinkProductId() {
@@ -75,18 +74,18 @@ export default function DashboardPage() {
 
     const visitIds = base.map((v) => v.id);
 
-    const { data: vp, error: vpErr } = await supabase
+    const { data: vp } = await supabase
       .from("visit_products")
       .select("visit_id, product_id, qty")
       .in("visit_id", visitIds);
 
-    const { data: seats, error: seatErr } = await supabase
+    const { data: seats } = await supabase
       .from("visit_seats")
       .select("visit_id, seat_no, end_time")
       .in("visit_id", visitIds);
 
     const drinksMap = new Map<string, number>();
-    if (!vpErr && drinkProductId) {
+    if (drinkProductId) {
       (vp ?? []).forEach((row: any) => {
         if (row.product_id === drinkProductId) {
           drinksMap.set(row.visit_id, row.qty);
@@ -95,14 +94,12 @@ export default function DashboardPage() {
     }
 
     const seatsMap = new Map<string, Seat[]>();
-    if (!seatErr) {
-      (seats ?? []).forEach((r: any) => {
-        const arr = seatsMap.get(r.visit_id) ?? [];
-        arr.push({ seat_no: r.seat_no, end_time: r.end_time });
-        seatsMap.set(r.visit_id, arr);
-      });
-      seatsMap.forEach((arr) => arr.sort((a, b) => a.seat_no - b.seat_no));
-    }
+    (seats ?? []).forEach((r: any) => {
+      const arr = seatsMap.get(r.visit_id) ?? [];
+      arr.push({ seat_no: r.seat_no, end_time: r.end_time });
+      seatsMap.set(r.visit_id, arr);
+    });
+    seatsMap.forEach((arr) => arr.sort((a, b) => a.seat_no - b.seat_no));
 
     setVisits(
       base.map((v) => ({
@@ -191,51 +188,51 @@ function VisitRow({
   const [busy, setBusy] = useState(false);
 
   const [showExtend, setShowExtend] = useState(false);
-  const [extendPeople, setExtendPeople] = useState(1);
   const [extendHours, setExtendHours] = useState(1);
   const [showExtendPaynow, setShowExtendPaynow] = useState(false);
 
-  // NEW: pick exactly which seats extend
-  const [selectedSeats, setSelectedSeats] = useState<number[]>([]);
+  const activeSeats = useMemo(() => {
+    // hide ended seats from UI (no more ugly 00:00 chips)
+    return v.seats
+      .filter((s) => new Date(s.end_time).getTime() > Date.now())
+      .sort((a, b) => a.seat_no - b.seat_no);
+  }, [v.seats]);
 
-  const extendAmount = extendPeople * extendHours * extensionPrice;
+  const distinctActiveSeatEndTimes = useMemo(() => {
+    const set = new Set(activeSeats.map((s) => new Date(s.end_time).getTime()));
+    return set.size;
+  }, [activeSeats]);
+
+  // ONLY show seat split row if there are different seat timings
+  const showSeatSplit =
+    activeSeats.length > 0 && distinctActiveSeatEndTimes > 1;
+
+  // Extend selection: default = all active seats
+  const [selectedSeatNos, setSelectedSeatNos] = useState<number[]>([]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  const activeSeats = useMemo(() => {
-    // only seats that haven't ended yet
-    return (v.seats ?? []).filter((s) => new Date(s.end_time).getTime() > now);
-  }, [v.seats, now]);
-
-  // Big timer:
-  // - if seats exist: show max(active seat end_time)
-  // - else: fallback to visit.est_end_time
+  // group end time = max seat end time (if seats exist), else visit est_end_time
   const groupEndTime = useMemo(() => {
     if (activeSeats.length > 0) {
-      const maxMs = Math.max(
-        ...activeSeats.map((s) => new Date(s.end_time).getTime()),
-      );
+      const maxMs = Math.max(...activeSeats.map((s) => +new Date(s.end_time)));
       return new Date(maxMs).toISOString();
     }
     return v.est_end_time;
   }, [activeSeats, v.est_end_time]);
 
-  const remaining = useMemo(() => {
-    if (!groupEndTime) return null;
-    const ms = new Date(groupEndTime).getTime() - now;
-    return Math.max(0, ms);
-  }, [groupEndTime, now]);
-
   const mmss = useMemo(() => {
-    if (remaining === null) return "--:--";
-    const totalSec = Math.floor(remaining / 1000);
+    if (!groupEndTime) return "--:--";
+    const ms = new Date(groupEndTime).getTime() - now;
+    const t = Math.max(0, ms);
+    const totalSec = Math.floor(t / 1000);
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
     return `${m}:${String(s).padStart(2, "0")}`;
-  }, [remaining]);
+  }, [groupEndTime, now]);
 
   function seatMmss(end_time: string) {
     const ms = new Date(end_time).getTime() - now;
@@ -279,7 +276,7 @@ function VisitRow({
   }
 
   async function endSeat(seatNo: number) {
-    if (!confirm(`Checkout seat ${seatNo} for ${v.name}?`)) return;
+    if (!confirm(`Checkout seat S${seatNo} for ${v.name}?`)) return;
     if (busy) return;
 
     setBusy(true);
@@ -293,73 +290,38 @@ function VisitRow({
     }
   }
 
-  function toggleSeat(seatNo: number) {
-    setSelectedSeats((prev) => {
-      const has = prev.includes(seatNo);
-      if (has) return prev.filter((x) => x !== seatNo);
-      if (prev.length >= extendPeople) return prev; // cap at extendPeople
-      return [...prev, seatNo].sort((a, b) => a - b);
-    });
+  function extendPeopleCount() {
+    return selectedSeatNos.length;
   }
+
+  const extendAmount = extendPeopleCount() * extendHours * extensionPrice;
 
   async function extend(method: "CASH" | "PAYNOW") {
     if (busy) return;
+    if (selectedSeatNos.length === 0) {
+      alert("Select at least 1 seat to extend.");
+      return;
+    }
     if (!confirm("Collect payment and extend?")) return;
-
-    // if no seats exist for some reason, fallback to old behavior
-    if (activeSeats.length === 0) {
-      setBusy(true);
-      try {
-        await rpcExtendVisitPartial({
-          visitId: v.id,
-          people: extendPeople,
-          addHours: extendHours,
-          method,
-        });
-        setShowExtendPaynow(false);
-        setShowExtend(false);
-        await onReload();
-      } catch (e: any) {
-        alert(e.message ?? "Failed to extend visit");
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-
-    // seat-based extend:
-    // if extending everyone => auto-select all active seats
-    const seatNos =
-      extendPeople >= activeSeats.length
-        ? activeSeats.map((s) => s.seat_no)
-        : selectedSeats;
-
-    if (extendPeople < activeSeats.length && seatNos.length !== extendPeople) {
-      alert(`Pick ${extendPeople} seat(s) to extend.`);
-      return;
-    }
 
     setBusy(true);
     try {
-      await rpcExtendSeats({
+      await rpcExtendSeatsAndCollectPayment({
         visitId: v.id,
-        seatNos,
+        seatNos: selectedSeatNos,
         addHours: extendHours,
         method,
       });
 
-      setSelectedSeats([]);
       setShowExtendPaynow(false);
       setShowExtend(false);
       await onReload();
     } catch (e: any) {
-      alert(e.message ?? "Failed to extend visit");
+      alert(e.message ?? "Failed to extend");
     } finally {
       setBusy(false);
     }
   }
-
-  const showSeatSplit = activeSeats.length > 0;
 
   return (
     <div className="space-y-2">
@@ -388,11 +350,11 @@ function VisitRow({
                 <button
                   key={s.seat_no}
                   className="border rounded px-2 py-1 text-xs disabled:opacity-50"
-                  disabled={busy}
+                  disabled={busy || showExtend} // disable while extend modal open
                   onClick={() => endSeat(s.seat_no)}
-                  title="Click to checkout this seat"
+                  title="Click to checkout this person"
                 >
-                  End S{s.seat_no} {seatMmss(s.end_time)}
+                  S{s.seat_no} · {seatMmss(s.end_time)}
                 </button>
               ))}
             </div>
@@ -423,11 +385,15 @@ function VisitRow({
             onClick={async () => {
               if (!paynowUen) await loadPaynowAndPrices();
 
-              setExtendPeople(
-                Math.max(1, Math.min(v.pax, activeSeats.length || v.pax)),
-              );
               setExtendHours(1);
-              setSelectedSeats([]);
+
+              // default selection = ALL active seats (or fallback 1..pax)
+              const seats =
+                activeSeats.length > 0
+                  ? activeSeats.map((s) => s.seat_no)
+                  : Array.from({ length: v.pax }, (_, i) => i + 1);
+              setSelectedSeatNos(seats);
+
               setShowExtendPaynow(false);
               setShowExtend(true);
             }}
@@ -448,14 +414,13 @@ function VisitRow({
             className="absolute inset-0 bg-black/60"
             onClick={() => !busy && setShowExtend(false)}
           />
-          <div className="absolute left-1/2 top-1/2 w-[min(560px,92vw)] -translate-x-1/2 -translate-y-1/2 border rounded bg-black p-4">
+          <div className="absolute left-1/2 top-1/2 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 border rounded bg-black p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="text-lg font-semibold">Extend: {v.name}</div>
               <button
                 className="border rounded px-3 py-1 text-sm disabled:opacity-50"
                 disabled={busy}
                 onClick={() => {
-                  setSelectedSeats([]);
                   setShowExtendPaynow(false);
                   setShowExtend(false);
                 }}
@@ -465,37 +430,71 @@ function VisitRow({
             </div>
 
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="text-sm opacity-70">People extending</div>
-                <input
-                  className="border rounded p-2 w-28 text-right"
-                  type="number"
-                  min={1}
-                  max={Math.max(1, activeSeats.length || v.pax)}
-                  value={extendPeople}
-                  onChange={(e) => {
-                    const max = Math.max(1, activeSeats.length || v.pax);
-                    const next = Math.min(
-                      max,
-                      Math.max(1, Number(e.target.value)),
+              {/* Seat selection always available in modal */}
+              <div className="space-y-2">
+                <div className="text-sm opacity-70">
+                  Who is extending ({selectedSeatNos.length})
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {(activeSeats.length > 0
+                    ? activeSeats.map((s) => s.seat_no)
+                    : Array.from({ length: v.pax }, (_, i) => i + 1)
+                  ).map((seatNo) => {
+                    const selected = selectedSeatNos.includes(seatNo);
+                    return (
+                      <button
+                        key={seatNo}
+                        className={`border rounded px-2 py-1 text-xs disabled:opacity-50 ${
+                          selected ? "bg-white/10" : ""
+                        }`}
+                        disabled={busy}
+                        onClick={() => {
+                          setSelectedSeatNos((prev) =>
+                            prev.includes(seatNo)
+                              ? prev.filter((x) => x !== seatNo)
+                              : [...prev, seatNo].sort((a, b) => a - b),
+                          );
+                        }}
+                      >
+                        S{seatNo}
+                      </button>
                     );
-                    setExtendPeople(next);
-                    setSelectedSeats([]); // reset selection when count changes
-                  }}
-                  disabled={busy}
-                />
+                  })}
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    className="border rounded px-2 py-1 text-xs disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => {
+                      const seats =
+                        activeSeats.length > 0
+                          ? activeSeats.map((s) => s.seat_no)
+                          : Array.from({ length: v.pax }, (_, i) => i + 1);
+                      setSelectedSeatNos(seats);
+                    }}
+                  >
+                    All
+                  </button>
+                  <button
+                    className="border rounded px-2 py-1 text-xs disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => setSelectedSeatNos([])}
+                  >
+                    Clear
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center justify-between">
                 <div className="text-sm opacity-70">Hours to add</div>
                 <input
-                  className="border rounded p-2 w-28 text-right"
+                  className="border rounded p-2 w-24 text-right"
                   type="number"
                   min={1}
                   value={extendHours}
-                  onChange={(e) =>
-                    setExtendHours(Math.max(1, Number(e.target.value)))
-                  }
+                  onChange={(e) => setExtendHours(Math.max(1, +e.target.value))}
                   disabled={busy}
                 />
               </div>
@@ -506,35 +505,6 @@ function VisitRow({
                   ${extendAmount.toFixed(2)}
                 </div>
               </div>
-
-              {/* NEW: Seat picker only if not everyone extends */}
-              {activeSeats.length > 0 && extendPeople < activeSeats.length && (
-                <div className="space-y-2">
-                  <div className="text-sm opacity-70">
-                    Pick {extendPeople} seat(s) to extend
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {activeSeats.map((s) => {
-                      const selected = selectedSeats.includes(s.seat_no);
-                      return (
-                        <button
-                          key={s.seat_no}
-                          className={`border rounded px-2 py-1 text-xs disabled:opacity-50 ${
-                            selected ? "bg-white/10" : ""
-                          }`}
-                          disabled={busy}
-                          onClick={() => toggleSeat(s.seat_no)}
-                        >
-                          S{s.seat_no} {seatMmss(s.end_time)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="text-xs opacity-60">
-                    Selected: {selectedSeats.length}/{extendPeople}
-                  </div>
-                </div>
-              )}
 
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
@@ -557,7 +527,6 @@ function VisitRow({
                   className="border rounded px-3 py-2 text-sm opacity-70 disabled:opacity-50"
                   disabled={busy}
                   onClick={() => {
-                    setSelectedSeats([]);
                     setShowExtendPaynow(false);
                     setShowExtend(false);
                   }}
@@ -590,13 +559,7 @@ function VisitRow({
 
                   <button
                     className="w-full border rounded p-2 disabled:opacity-50"
-                    disabled={
-                      busy ||
-                      !paynowUen ||
-                      (activeSeats.length > 0 &&
-                        extendPeople < activeSeats.length &&
-                        selectedSeats.length !== extendPeople)
-                    }
+                    disabled={busy || !paynowUen}
                     onClick={() => extend("PAYNOW")}
                   >
                     Confirm payment received
