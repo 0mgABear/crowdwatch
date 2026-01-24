@@ -138,3 +138,10 @@ export async function rpcExtendSeatsAndCollectPayment(params: {
   if (error) throw error;
   return data as string;
 }
+
+export async function rpcEnsureVisitSeats({ visitId }: { visitId: string }) {
+  const { error } = await supabase.rpc("ensure_visit_seats", {
+    p_visit_id: visitId,
+  });
+  if (error) throw error;
+}

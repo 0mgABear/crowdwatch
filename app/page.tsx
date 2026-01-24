@@ -1,26 +1,67 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
 import { supabase } from "@/lib/supabaseClient";
 import {
   rpcCollectDrink,
   rpcEndSeat,
   rpcExtendSeatsAndCollectPayment,
 } from "@/lib/rpc";
-import { QRCodeCanvas } from "qrcode.react";
-import { buildPayNowPayload } from "@/lib/paynow";
-import Link from "next/link";
 
 type Seat = { seat_no: number; end_time: string };
+
 type Visit = {
   id: string;
   name: string;
   pax: number;
-  status: "DRAFT" | "ACTIVE" | "CLOSED";
+  status: "ACTIVE";
   est_end_time: string | null;
   drinks_collected: number;
   seats: Seat[];
 };
+
+function PersonIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M12 12a4.5 4.5 0 1 0-4.5-4.5A4.5 4.5 0 0 0 12 12Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M4.5 20.2c1.9-4 13.1-4 15 0"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function PlusIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M12 5v14M5 12h14"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
 export default function DashboardPage() {
   const [visits, setVisits] = useState<Visit[]>([]);
@@ -62,18 +103,12 @@ export default function DashboardPage() {
       .eq("status", "ACTIVE")
       .order("est_end_time", { ascending: true });
 
-    if (error) return;
-
-    const base = (data ?? []) as Array<
-      Omit<Visit, "drinks_collected" | "seats">
-    >;
-
-    if (base.length === 0) {
+    if (error || !data) {
       setVisits([]);
       return;
     }
 
-    const visitIds = base.map((v) => v.id);
+    const visitIds = data.map((v) => v.id);
 
     const { data: vp } = await supabase
       .from("visit_products")
@@ -103,7 +138,7 @@ export default function DashboardPage() {
     seatsMap.forEach((arr) => arr.sort((a, b) => a.seat_no - b.seat_no));
 
     setVisits(
-      base.map((v) => ({
+      data.map((v: any) => ({
         ...v,
         drinks_collected: drinksMap.get(v.id) ?? 0,
         seats: seatsMap.get(v.id) ?? [],
@@ -143,21 +178,58 @@ export default function DashboardPage() {
     };
   }, [drinkProductId]);
 
+  const totalPax = useMemo(() => {
+    const now = Date.now();
+    return visits.reduce((sum, v) => {
+      const activeSeats = (v.seats ?? []).filter(
+        (s) => new Date(s.end_time).getTime() > now,
+      );
+      const inside = activeSeats.length > 0 ? activeSeats.length : v.pax;
+      return sum + inside;
+    }, 0);
+  }, [visits]);
+
+  const capacityColor =
+    totalPax <= 8
+      ? "text-green-400"
+      : totalPax <= 15
+        ? "text-orange-400"
+        : "text-red-400";
+
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold">CrowdWatch</h1>
-        <Link
-          href="/new-checkin"
-          className="inline-flex items-center justify-center rounded border border-white/20 bg-white/5 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-white/10"
-        >
-          New Check In
-        </Link>
+    <div className="px-4 py-4 sm:px-6 sm:py-6 space-y-4 max-w-3xl mx-auto pb-24">
+      {/* HEADER */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link href="/" aria-label="Home">
+            <Image
+              src="/patacat.jpg"
+              alt="Home"
+              width={40}
+              height={40}
+              className="rounded-full border border-white/20"
+            />
+          </Link>
+
+          <div className="text-lg font-semibold">CrowdWatch</div>
+        </div>
+
+        {/* CAPACITY TOP RIGHT */}
+        <div className="flex items-center gap-2">
+          <PersonIcon className={`h-5 w-5 ${capacityColor}`} />
+          <div className={`text-2xl font-bold tabular-nums ${capacityColor}`}>
+            {totalPax}
+          </div>
+        </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-3">
+        {visits.length === 0 && (
+          <div className="opacity-60">No active visits</div>
+        )}
+
         {visits.map((v) => (
-          <VisitRow
+          <VisitCard
             key={v.id}
             v={v}
             onReload={loadDashboard}
@@ -166,15 +238,21 @@ export default function DashboardPage() {
             extensionPrice={extensionPrice}
           />
         ))}
-        {visits.length === 0 && (
-          <div className="opacity-70">No active visits</div>
-        )}
       </div>
+
+      {/* BOTTOM CENTER NEW CHECK IN */}
+      <Link
+        href="/new-checkin"
+        className="fixed left-1/2 bottom-5 -translate-x-1/2 z-40 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white shadow-lg backdrop-blur hover:bg-white/15 active:scale-[0.99]"
+      >
+        <PlusIcon className="h-5 w-5" />
+        New check-in
+      </Link>
     </div>
   );
 }
 
-function VisitRow({
+function VisitCard({
   v,
   onReload,
   loadPaynowAndPrices,
@@ -190,36 +268,29 @@ function VisitRow({
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
 
+  // extend modal
   const [showExtend, setShowExtend] = useState(false);
   const [extendHours, setExtendHours] = useState(1);
   const [showExtendPaynow, setShowExtendPaynow] = useState(false);
-
-  const activeSeats = useMemo(() => {
-    // hide ended seats from UI (no more ugly 00:00 chips)
-    return v.seats
-      .filter((s) => new Date(s.end_time).getTime() > Date.now())
-      .sort((a, b) => a.seat_no - b.seat_no);
-  }, [v.seats]);
-
-  const distinctActiveSeatEndTimes = useMemo(() => {
-    const set = new Set(activeSeats.map((s) => new Date(s.end_time).getTime()));
-    return set.size;
-  }, [activeSeats]);
-
-  // ONLY show seat split row if there are different seat timings
-  const showSeatSplit =
-    activeSeats.length > 0 && distinctActiveSeatEndTimes > 1;
-
-  // Extend selection: default = all active seats
   const [selectedSeatNos, setSelectedSeatNos] = useState<number[]>([]);
+
+  // partial-leave modal (ONLY works when seats exist)
+  const [showLeaveCount, setShowLeaveCount] = useState(false);
+  const [leaveCount, setLeaveCount] = useState(1);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // group end time = max seat end time (if seats exist), else visit est_end_time
-  const groupEndTime = useMemo(() => {
+  const activeSeats = useMemo(() => {
+    return (v.seats ?? []).filter((s) => new Date(s.end_time).getTime() > now);
+  }, [v.seats, now]);
+
+  const hasExtensions = activeSeats.length > 0;
+  const peopleLeft = hasExtensions ? activeSeats.length : v.pax;
+
+  const groupEndTimeIso = useMemo(() => {
     if (activeSeats.length > 0) {
       const maxMs = Math.max(...activeSeats.map((s) => +new Date(s.end_time)));
       return new Date(maxMs).toISOString();
@@ -228,23 +299,16 @@ function VisitRow({
   }, [activeSeats, v.est_end_time]);
 
   const mmss = useMemo(() => {
-    if (!groupEndTime) return "--:--";
-    const ms = new Date(groupEndTime).getTime() - now;
+    if (!groupEndTimeIso) return "--:--";
+    const ms = new Date(groupEndTimeIso).getTime() - now;
     const t = Math.max(0, ms);
     const totalSec = Math.floor(t / 1000);
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
     return `${m}:${String(s).padStart(2, "0")}`;
-  }, [groupEndTime, now]);
+  }, [groupEndTimeIso, now]);
 
-  function seatMmss(end_time: string) {
-    const ms = new Date(end_time).getTime() - now;
-    const t = Math.max(0, ms);
-    const totalSec = Math.floor(t / 1000);
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
-    return `${m}:${String(s).padStart(2, "0")}`;
-  }
+  const timerLabel = peopleLeft <= 1 ? "ends" : "group ends";
 
   async function addDrink() {
     if (busy) return;
@@ -259,9 +323,9 @@ function VisitRow({
     }
   }
 
-  async function endVisit() {
-    if (!confirm(`End visit for ${v.name}?`)) return;
+  async function endEntireVisit() {
     if (busy) return;
+    if (!confirm(`End visit for ${v.name}?`)) return;
 
     setBusy(true);
     try {
@@ -278,26 +342,49 @@ function VisitRow({
     }
   }
 
-  async function endSeat(seatNo: number) {
-    if (!confirm(`Checkout seat S${seatNo} for ${v.name}?`)) return;
-    if (busy) return;
+  async function endSomePeople(count: number) {
+    if (activeSeats.length === 0) {
+      alert("Partial checkout requires seat rows (extensions).");
+      return;
+    }
+
+    const toEnd = activeSeats
+      .slice()
+      .sort((a, b) => a.seat_no - b.seat_no)
+      .slice(0, count);
 
     setBusy(true);
     try {
-      await rpcEndSeat({ visitId: v.id, seatNo });
+      for (const s of toEnd) {
+        await rpcEndSeat({ visitId: v.id, seatNo: s.seat_no });
+      }
       await onReload();
+      setShowLeaveCount(false);
     } catch (e: any) {
-      alert(e.message ?? "Failed to checkout seat");
+      alert(e.message ?? "Failed to checkout seats");
     } finally {
       setBusy(false);
     }
   }
 
-  function extendPeopleCount() {
-    return selectedSeatNos.length;
+  async function onEndPressed() {
+    if (busy) return;
+
+    if (!hasExtensions) {
+      await endEntireVisit();
+      return;
+    }
+
+    if (peopleLeft <= 1) {
+      await endEntireVisit();
+      return;
+    }
+
+    setLeaveCount(1);
+    setShowLeaveCount(true);
   }
 
-  const extendAmount = extendPeopleCount() * extendHours * extensionPrice;
+  const extendAmount = selectedSeatNos.length * extendHours * extensionPrice;
 
   async function extend(method: "CASH" | "PAYNOW") {
     if (busy) return;
@@ -326,91 +413,160 @@ function VisitRow({
     }
   }
 
-  return (
-    <div className="space-y-2">
-      <div className="border rounded p-3 flex items-center justify-between">
-        {/* LEFT */}
-        <div className="space-y-2">
-          <div className="font-medium">{v.name}</div>
+  const drinksOk = v.drinks_collected >= v.pax;
 
-          <div className="flex items-center gap-2">
-            <span className="text-lg font-semibold">Pax {v.pax}</span>
+  return (
+    <div className="rounded-lg border border-white/15 bg-white/5 p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-lg font-semibold truncate">{v.name}</div>
+
+          <div className="mt-2 flex items-center gap-3 text-sm">
+            <span className="inline-flex items-center gap-2">
+              <PersonIcon className="h-5 w-5 text-white/70" />
+              <span className="font-medium">{peopleLeft}</span>
+            </span>
 
             <span
               className={`text-xs px-2 py-1 rounded font-medium ${
-                v.drinks_collected < v.pax
-                  ? "bg-red-500/20 text-red-400"
-                  : "bg-green-500/20 text-green-400"
+                drinksOk
+                  ? "bg-green-500/20 text-green-400"
+                  : "bg-red-500/20 text-red-400"
               }`}
             >
               Drinks {v.drinks_collected}/{v.pax}
             </span>
           </div>
 
-          {showSeatSplit && (
-            <div className="flex flex-wrap gap-2">
-              {activeSeats.map((s) => (
-                <button
-                  key={s.seat_no}
-                  className="border rounded px-2 py-1 text-xs disabled:opacity-50"
-                  disabled={busy || showExtend} // disable while extend modal open
-                  onClick={() => endSeat(s.seat_no)}
-                  title="Click to checkout this person"
-                >
-                  S{s.seat_no} · {seatMmss(s.end_time)}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={addDrink}
+              disabled={busy || v.drinks_collected >= v.pax}
+              className="rounded border border-white/20 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+            >
+              +1 drink
+            </button>
+
+            <button
+              onClick={onEndPressed}
+              disabled={busy}
+              className="rounded border border-white/20 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+            >
+              End
+            </button>
+
+            <button
+              onClick={async () => {
+                if (!paynowUen) await loadPaynowAndPrices();
+                setExtendHours(1);
+
+                const seats =
+                  activeSeats.length > 0
+                    ? activeSeats.map((s) => s.seat_no)
+                    : Array.from({ length: v.pax }, (_, i) => i + 1);
+
+                setSelectedSeatNos(seats);
+                setShowExtendPaynow(false);
+                setShowExtend(true);
+              }}
+              disabled={busy}
+              className="rounded border border-white/20 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+            >
+              Extend
+            </button>
+          </div>
         </div>
 
-        {/* RIGHT */}
-        <div className="flex items-center gap-3">
-          <button
-            className="border rounded px-3 py-2 text-sm disabled:opacity-50"
-            disabled={busy || v.drinks_collected >= v.pax}
-            onClick={addDrink}
-          >
-            +1 drink
-          </button>
-
-          <button
-            className="border rounded px-3 py-2 text-sm disabled:opacity-50"
-            disabled={busy}
-            onClick={endVisit}
-          >
-            End
-          </button>
-
-          <button
-            className="border rounded px-3 py-2 text-sm disabled:opacity-50"
-            disabled={busy}
-            onClick={async () => {
-              if (!paynowUen) await loadPaynowAndPrices();
-
-              setExtendHours(1);
-
-              // default selection = ALL active seats (or fallback 1..pax)
-              const seats =
-                activeSeats.length > 0
-                  ? activeSeats.map((s) => s.seat_no)
-                  : Array.from({ length: v.pax }, (_, i) => i + 1);
-              setSelectedSeatNos(seats);
-
-              setShowExtendPaynow(false);
-              setShowExtend(true);
-            }}
-          >
-            Extend
-          </button>
-
-          <div className="text-right">
-            <div className="text-2xl font-semibold tabular-nums">{mmss}</div>
-            <div className="text-sm opacity-70">group ends</div>
-          </div>
+        <div className="text-right shrink-0">
+          <div className="text-4xl font-bold tabular-nums">{mmss}</div>
+          <div className="text-sm opacity-70">{timerLabel}</div>
         </div>
       </div>
 
+      {/* LEAVE COUNT MODAL */}
+      {showLeaveCount && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => !busy && setShowLeaveCount(false)}
+          />
+          <div className="absolute left-1/2 top-1/2 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-white/20 bg-black p-4">
+            <div className="text-lg font-semibold">
+              How many people are leaving?
+            </div>
+            <div className="mt-1 text-sm text-white/60">
+              {v.name} has {peopleLeft} people left.
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {[1, 2, 3].map((n) => (
+                <button
+                  key={n}
+                  disabled={busy || n > peopleLeft - 1}
+                  onClick={() => setLeaveCount(n)}
+                  className={`rounded border px-3 py-2 text-sm disabled:opacity-50 ${
+                    leaveCount === n
+                      ? "border-white/40 bg-white/10"
+                      : "border-white/20"
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+
+              <button
+                disabled={busy}
+                onClick={() => setLeaveCount(peopleLeft)}
+                className={`rounded border px-3 py-2 text-sm disabled:opacity-50 ${
+                  leaveCount === peopleLeft
+                    ? "border-white/40 bg-white/10"
+                    : "border-white/20"
+                }`}
+              >
+                All
+              </button>
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <button
+                disabled={busy}
+                onClick={() => setShowLeaveCount(false)}
+                className="flex-1 rounded border border-white/20 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                disabled={busy}
+                onClick={async () => {
+                  if (leaveCount >= peopleLeft) {
+                    await endEntireVisit();
+                    setShowLeaveCount(false);
+                  } else {
+                    await endSomePeople(leaveCount);
+                  }
+                }}
+                className="flex-1 rounded border border-white/20 bg-white/5 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+              >
+                Confirm
+              </button>
+            </div>
+
+            <button
+              disabled={busy}
+              onClick={async () => {
+                await endEntireVisit();
+                setShowLeaveCount(false);
+              }}
+              className="mt-3 w-full rounded border border-white/20 px-3 py-2 text-sm opacity-70 hover:bg-white/10 disabled:opacity-50"
+            >
+              End entire group
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* EXTEND MODAL */}
       {showExtend && (
         <div className="fixed inset-0 z-50">
           <div
@@ -433,7 +589,6 @@ function VisitRow({
             </div>
 
             <div className="space-y-3">
-              {/* Seat selection always available in modal */}
               <div className="space-y-2">
                 <div className="text-sm opacity-70">
                   Who is extending ({selectedSeatNos.length})
@@ -464,29 +619,6 @@ function VisitRow({
                       </button>
                     );
                   })}
-                </div>
-
-                <div className="flex gap-2">
-                  <button
-                    className="border rounded px-2 py-1 text-xs disabled:opacity-50"
-                    disabled={busy}
-                    onClick={() => {
-                      const seats =
-                        activeSeats.length > 0
-                          ? activeSeats.map((s) => s.seat_no)
-                          : Array.from({ length: v.pax }, (_, i) => i + 1);
-                      setSelectedSeatNos(seats);
-                    }}
-                  >
-                    All
-                  </button>
-                  <button
-                    className="border rounded px-2 py-1 text-xs disabled:opacity-50"
-                    disabled={busy}
-                    onClick={() => setSelectedSeatNos([])}
-                  >
-                    Clear
-                  </button>
                 </div>
               </div>
 
@@ -540,25 +672,9 @@ function VisitRow({
 
               {showExtendPaynow && (
                 <div className="mt-4 space-y-3">
-                  {!paynowUen ? (
-                    <div className="text-sm text-red-400">
-                      Missing PayNow UEN in settings.
-                    </div>
-                  ) : (
-                    <div className="flex justify-center bg-white p-3 rounded">
-                      <QRCodeCanvas
-                        value={buildPayNowPayload({
-                          uen: paynowUen,
-                          amount: extendAmount,
-                          merchantName: "Shelter",
-                          merchantCity: "Singapore",
-                          editable: false,
-                        })}
-                        size={240}
-                        includeMargin
-                      />
-                    </div>
-                  )}
+                  <div className="text-sm opacity-70">
+                    Confirm on your PayNow device, then press confirm.
+                  </div>
 
                   <button
                     className="w-full border rounded p-2 disabled:opacity-50"
