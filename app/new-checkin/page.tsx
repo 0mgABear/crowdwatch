@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { rpcStartVisit } from "@/lib/rpc";
+import { QRCodeCanvas } from "qrcode.react";
+import { buildPayNowPayload } from "@/lib/paynow";
 
 export default function NewCheckinPage() {
   const [name, setName] = useState("");
@@ -11,6 +13,9 @@ export default function NewCheckinPage() {
   const [visitId, setVisitId] = useState<string | null>(null);
   const [step, setStep] = useState<"FORM" | "PAY">("FORM");
   const [loading, setLoading] = useState(false);
+  const [showPaynow, setShowPaynow] = useState(false);
+  const [uen, setUen] = useState<string | null>(null);
+  const [merchantName, setMerchantName] = useState<string>("Shelter");
 
   const bufferMinutes = 10;
   const firstHourPrice = 15;
@@ -29,6 +34,7 @@ export default function NewCheckinPage() {
           .eq("id", visitId);
 
         setStep("PAY");
+        loadPaynowSettings().catch(console.error);
         return;
       }
 
@@ -42,6 +48,7 @@ export default function NewCheckinPage() {
 
       setVisitId(data.id);
       setStep("PAY");
+      loadPaynowSettings().catch(console.error);
     } finally {
       setLoading(false);
     }
@@ -79,6 +86,21 @@ export default function NewCheckinPage() {
       setStep("FORM");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadPaynowSettings() {
+    const { data, error } = await supabase
+      .from("settings")
+      .select("*")
+      .eq("id", 1)
+      .single();
+
+    console.log("settings data", data, "error", error);
+
+    if (!error && data?.paynow_uen) {
+      setUen(data.paynow_uen);
+      setMerchantName(data.merchant_name ?? "Shelter");
     }
   }
 
@@ -146,7 +168,7 @@ export default function NewCheckinPage() {
             </button>
             <button
               className="border rounded p-2"
-              onClick={() => confirmPaid("PAYNOW")}
+              onClick={() => setShowPaynow(true)}
               disabled={loading}
             >
               PayNow
@@ -155,11 +177,79 @@ export default function NewCheckinPage() {
 
           <button
             className="w-full border rounded p-2"
-            onClick={cancelDraft}
+            onClick={() => {
+              cancelDraft();
+            }}
             disabled={loading}
           >
             Cancel
           </button>
+
+          {showPaynow && (
+            <div className="fixed inset-0 z-50">
+              <div
+                className="absolute inset-0 bg-black/60"
+                onClick={() => !loading && setShowPaynow(false)}
+              />
+              <div className="absolute left-1/2 top-1/2 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 border rounded bg-black p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-lg font-semibold">PayNow</div>
+                  <button
+                    className="border rounded px-3 py-1 text-sm disabled:opacity-50"
+                    disabled={loading}
+                    onClick={() => setShowPaynow(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="text-sm opacity-70">Amount</div>
+                  <div className="text-3xl font-bold">${total}</div>
+
+                  {!uen ? (
+                    <div className="text-sm text-red-400">
+                      Missing PayNow UEN in settings.
+                    </div>
+                  ) : (
+                    <div className="flex justify-center bg-white p-3 rounded">
+                      <QRCodeCanvas
+                        value={buildPayNowPayload({
+                          uen,
+                          amount: total,
+                          merchantName,
+                          merchantCity: "Singapore",
+                          editable: false,
+                          // optional: ref: visitId ?? undefined,
+                        })}
+                        size={260}
+                        includeMargin
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    className="w-full border rounded p-2 disabled:opacity-50"
+                    disabled={loading || !uen}
+                    onClick={async () => {
+                      await confirmPaid("PAYNOW");
+                      // confirmPaid already redirects
+                    }}
+                  >
+                    Confirm payment received
+                  </button>
+
+                  <button
+                    className="w-full border rounded p-2 opacity-70 disabled:opacity-50"
+                    disabled={loading}
+                    onClick={() => setShowPaynow(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

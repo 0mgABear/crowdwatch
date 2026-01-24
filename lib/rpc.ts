@@ -72,3 +72,22 @@ export async function rpcCollectDrink(params: {
   if (error) throw error;
   return data as number; // new drinks collected
 }
+
+export async function rpcExtendVisitPartial(params: {
+  visitId: string;
+  people: number;
+  addHours: number;
+  method: "CASH" | "PAYNOW";
+}) {
+  const { data, error } = await supabase.rpc(
+    "extend_visit_partial_and_collect_payment",
+    {
+      p_visit_id: params.visitId,
+      p_people: params.people,
+      p_add_hours: params.addHours,
+      p_method: params.method,
+    },
+  );
+  if (error) throw error;
+  return data as string;
+}
