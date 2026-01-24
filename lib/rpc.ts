@@ -91,3 +91,30 @@ export async function rpcExtendVisitPartial(params: {
   if (error) throw error;
   return data as string;
 }
+
+export async function rpcEndSeat(params: { visitId: string; seatNo: number }) {
+  const { error } = await supabase.rpc("end_seat", {
+    p_visit_id: params.visitId,
+    p_seat_no: params.seatNo,
+  });
+  if (error) throw error;
+}
+
+export async function rpcExtendSeats(params: {
+  visitId: string;
+  seatNos: number[];
+  addHours: number;
+  method: "CASH" | "PAYNOW";
+}) {
+  const { data, error } = await supabase.rpc(
+    "extend_seats_and_collect_payment",
+    {
+      p_visit_id: params.visitId,
+      p_seat_nos: params.seatNos,
+      p_add_hours: params.addHours,
+      p_method: params.method,
+    },
+  );
+  if (error) throw error;
+  return data as string;
+}
