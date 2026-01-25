@@ -264,20 +264,20 @@ export default function DashboardPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            aria-label="Home / Admin"
+            aria-label="Admin"
+            onTouchStart={startLongPress}
+            onTouchEnd={cancelLongPress}
             onMouseDown={startLongPress}
             onMouseUp={cancelLongPress}
             onMouseLeave={cancelLongPress}
-            onTouchStart={startLongPress}
-            onTouchEnd={cancelLongPress}
-            className="rounded-full"
+            className="rounded-full select-none"
           >
             <Image
               src="/patacat.jpg"
-              alt="Home"
+              alt="Admin"
               width={40}
               height={40}
-              className="rounded-full border border-white/20"
+              className="rounded-full border border-white/20 pointer-events-none"
             />
           </button>
 

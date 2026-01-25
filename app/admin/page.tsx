@@ -6,13 +6,7 @@ import Image from "next/image";
 
 type Product = { id: string; name: string; price: number; active: boolean };
 
-const HIDE_NAMES = new Set(["Subsequent hour"]); // keep in DB, hide in UI
-
-function toMoneyInput(v: number) {
-  // keep stable for UI; allow 0, ints, decimals
-  if (!Number.isFinite(v)) return "0";
-  return String(v);
-}
+const HIDE_NAMES = new Set(["Subsequent hour"]);
 
 export default function AdminPage() {
   const [authed, setAuthed] = useState<boolean | null>(null);
@@ -42,7 +36,6 @@ export default function AdminPage() {
       (p: Product) => !HIDE_NAMES.has(p.name),
     );
 
-    // sort: active first, then name
     list.sort((a, b) => {
       if (a.active !== b.active) return a.active ? -1 : 1;
       return a.name.localeCompare(b.name);
@@ -196,7 +189,7 @@ export default function AdminPage() {
           </Link>
           <div>
             <div className="text-lg font-semibold">Admin</div>
-            <div className="text-sm text-white/60">Products & password</div>
+            <div className="text-sm text-white/60">Management Page</div>
           </div>
         </div>
 
@@ -225,60 +218,87 @@ export default function AdminPage() {
 
         <div className="space-y-2">
           {products.map((p, idx) => (
-            <div key={p.id} className="flex items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="font-medium truncate">{p.name}</div>
+            <div
+              key={p.id}
+              className="rounded border border-white/10 p-3 space-y-2"
+            >
+              <div className="font-medium">{p.name}</div>
+
+              <div className="flex items-center gap-2">
+                {/* Price with $ */}
+                <div className="flex items-center w-32 rounded border border-white/20 bg-black px-3 py-2">
+                  <span className="text-white/50 mr-2">$</span>
+                  <input
+                    className="w-full bg-transparent text-right text-sm outline-none [appearance:textfield]"
+                    inputMode="decimal"
+                    value={String(p.price)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setProducts((prev) => {
+                        const copy = [...prev];
+                        copy[idx] = { ...copy[idx], price: Number(v || 0) };
+                        return copy;
+                      });
+                    }}
+                  />
+                </div>
+
+                {/* Right side: delete icon + toggle */}
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    disabled={busy}
+                    onClick={() => deleteProduct(p.id, p.name)}
+                    className="h-9 w-11 rounded border border-white/20 hover:bg-white/10 disabled:opacity-50 flex items-center justify-center"
+                    title="Delete"
+                    aria-label="Delete"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-5 w-5"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M9 3h6m-9 4h12m-1 0-1 14H8L7 7"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M10 11v6M14 11v6"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+
+                  <button
+                    type="button"
+                    aria-pressed={p.active}
+                    onClick={() => {
+                      setProducts((prev) => {
+                        const copy = [...prev];
+                        copy[idx] = { ...copy[idx], active: !copy[idx].active };
+                        return copy;
+                      });
+                    }}
+                    className={`h-9 w-14 rounded-full border transition relative ${
+                      p.active
+                        ? "border-green-500/40 bg-green-500/20"
+                        : "border-white/20 bg-white/5"
+                    }`}
+                    title={p.active ? "Active" : "Inactive"}
+                  >
+                    <span
+                      className={`absolute top-1/2 -translate-y-1/2 h-6 w-6 rounded-full bg-white/80 transition ${
+                        p.active ? "left-7" : "left-1"
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
-
-              {/* Price (decimal), no spinner */}
-              <input
-                className="w-28 rounded border border-white/20 bg-black px-3 py-2 text-right text-sm outline-none"
-                type="text"
-                inputMode="decimal"
-                value={toMoneyInput(p.price)}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  // allow typing ".", "1.", etc. without blowing up
-                  const cleaned = raw.replace(/[^0-9.]/g, "");
-                  const n = Number(cleaned);
-                  setProducts((prev) => {
-                    const copy = [...prev];
-                    copy[idx] = {
-                      ...copy[idx],
-                      price: Number.isFinite(n) ? n : copy[idx].price,
-                    };
-                    return copy;
-                  });
-                }}
-              />
-
-              {/* Active toggle (sold out) */}
-              <button
-                type="button"
-                className={`w-[96px] rounded border px-3 py-2 text-sm ${
-                  p.active
-                    ? "border-green-500/40 text-green-300"
-                    : "border-white/20 text-white/70"
-                }`}
-                onClick={() => {
-                  setProducts((prev) => {
-                    const copy = [...prev];
-                    copy[idx] = { ...copy[idx], active: !copy[idx].active };
-                    return copy;
-                  });
-                }}
-              >
-                {p.active ? "Active" : "Inactive"}
-              </button>
-
-              {/* Delete */}
-              <button
-                disabled={busy}
-                onClick={() => deleteProduct(p.id, p.name)}
-                className="w-[90px] rounded border border-white/20 px-3 py-2 text-sm text-white/80 hover:bg-white/10 disabled:opacity-50"
-              >
-                Delete
-              </button>
             </div>
           ))}
         </div>
@@ -286,6 +306,7 @@ export default function AdminPage() {
         {/* ADD PRODUCT */}
         <div className="border-t border-white/10 pt-4 space-y-3">
           <div className="text-base font-semibold opacity-80">Add product</div>
+
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px_110px] gap-3">
             <input
               className="w-full rounded border border-white/20 bg-black px-4 py-3 text-white text-sm outline-none"
@@ -293,15 +314,21 @@ export default function AdminPage() {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
             />
-            <input
-              className="w-full rounded border border-white/20 bg-black px-4 py-3 text-white text-sm outline-none text-right"
-              type="text"
-              inputMode="decimal"
-              value={newPriceStr}
-              onChange={(e) =>
-                setNewPriceStr(e.target.value.replace(/[^0-9.]/g, ""))
-              }
-            />
+
+            {/* Price with $ (same style) */}
+            <div className="w-full rounded border border-white/20 bg-black px-4 py-3 flex items-center">
+              <span className="text-white/50 mr-2">$</span>
+              <input
+                className="w-full bg-transparent text-right text-sm outline-none [appearance:textfield]"
+                type="text"
+                inputMode="decimal"
+                value={newPriceStr}
+                onChange={(e) =>
+                  setNewPriceStr(e.target.value.replace(/[^0-9.]/g, ""))
+                }
+              />
+            </div>
+
             <button
               type="button"
               onClick={() => setNewActive((x) => !x)}
