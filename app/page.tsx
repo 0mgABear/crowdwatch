@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import {
   rpcCollectDrink,
@@ -64,10 +65,18 @@ function PlusIcon({ className = "" }: { className?: string }) {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
+
   const [visits, setVisits] = useState<Visit[]>([]);
   const [paynowUen, setPaynowUen] = useState<string | null>(null);
   const [extensionPrice, setExtensionPrice] = useState<number>(5);
   const [drinkProductId, setDrinkProductId] = useState<string | null>(null);
+
+  // admin auth
+  const [adminAuthed, setAdminAuthed] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminPw, setAdminPw] = useState("");
+  const [adminBusy, setAdminBusy] = useState(false);
 
   async function loadPaynowAndPrices() {
     const { data: s } = await supabase
@@ -146,9 +155,20 @@ export default function DashboardPage() {
     );
   }
 
+  // check admin cookie
+  async function refreshAdminMe() {
+    try {
+      const r = await fetch("/api/admin/me", { method: "GET" });
+      setAdminAuthed(r.ok);
+    } catch {
+      setAdminAuthed(false);
+    }
+  }
+
   useEffect(() => {
     loadPaynowAndPrices().catch(console.error);
     loadDrinkProductId().catch(console.error);
+    refreshAdminMe().catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -178,6 +198,7 @@ export default function DashboardPage() {
     };
   }, [drinkProductId]);
 
+  // total pax inside (respects partial checkouts if seats exist)
   const totalPax = useMemo(() => {
     const now = Date.now();
     return visits.reduce((sum, v) => {
@@ -189,40 +210,125 @@ export default function DashboardPage() {
     }, 0);
   }, [visits]);
 
-  const capacityColor =
+  const capColor =
     totalPax <= 8
       ? "text-green-400"
       : totalPax <= 15
         ? "text-orange-400"
         : "text-red-400";
 
+  // long-press logo to open admin login
+  const pressTimer = useRef<number | null>(null);
+  const longPressFired = useRef(false);
+
+  function clearPressTimer() {
+    if (pressTimer.current) {
+      window.clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  }
+
+  function onLogoPointerDown() {
+    longPressFired.current = false;
+    clearPressTimer();
+    pressTimer.current = window.setTimeout(() => {
+      longPressFired.current = true;
+      setShowAdminLogin(true);
+    }, 2000);
+  }
+
+  function onLogoPointerUpOrCancel() {
+    clearPressTimer();
+  }
+
+  function onLogoClick() {
+    // if long press opened modal, don't navigate
+    if (longPressFired.current) return;
+    router.push("/");
+  }
+
+  async function adminLogin() {
+    if (adminBusy) return;
+    if (!adminPw.trim()) return;
+
+    setAdminBusy(true);
+    try {
+      const r = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: adminPw }),
+      });
+
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert(j?.error ?? "Login failed");
+        return;
+      }
+
+      setAdminAuthed(true);
+      setShowAdminLogin(false);
+      setAdminPw("");
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function adminLogout() {
+    if (adminBusy) return;
+    setAdminBusy(true);
+    try {
+      await fetch("/api/admin/logout", { method: "POST" });
+      setAdminAuthed(false);
+      setShowAdminLogin(false);
+      setAdminPw("");
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   return (
-    <div className="px-4 py-4 sm:px-6 sm:py-6 space-y-4 max-w-3xl mx-auto pb-24">
+    <div className="px-4 py-4 sm:px-6 sm:py-6 space-y-4 max-w-3xl mx-auto pb-28">
       {/* HEADER */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link href="/" aria-label="Home">
+          <button
+            type="button"
+            aria-label="Home (long-press for admin)"
+            className="shrink-0"
+            onPointerDown={onLogoPointerDown}
+            onPointerUp={onLogoPointerUpOrCancel}
+            onPointerCancel={onLogoPointerUpOrCancel}
+            onPointerLeave={onLogoPointerUpOrCancel}
+            onClick={onLogoClick}
+          >
             <Image
               src="/patacat.jpg"
               alt="Home"
               width={40}
               height={40}
               className="rounded-full border border-white/20"
+              priority
             />
-          </Link>
+          </button>
 
-          <div className="text-lg font-semibold">CrowdWatch</div>
+          <div className="min-w-0">
+            <div className="text-lg font-semibold leading-tight">
+              CrowdWatch
+            </div>
+            {adminAuthed && (
+              <div className="text-xs text-white/50 leading-tight">Admin</div>
+            )}
+          </div>
         </div>
 
-        {/* CAPACITY TOP RIGHT */}
-        <div className="flex items-center gap-2">
-          <PersonIcon className={`h-5 w-5 ${capacityColor}`} />
-          <div className={`text-2xl font-bold tabular-nums ${capacityColor}`}>
-            {totalPax}
-          </div>
+        {/* capacity top-right */}
+        <div className={`flex items-center gap-2 ${capColor}`}>
+          <PersonIcon className="h-5 w-5" />
+          <span className="text-2xl font-bold tabular-nums">{totalPax}</span>
         </div>
       </div>
 
+      {/* VISITS */}
       <div className="space-y-3">
         {visits.length === 0 && (
           <div className="opacity-60">No active visits</div>
@@ -240,14 +346,73 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* BOTTOM CENTER NEW CHECK IN */}
-      <Link
-        href="/new-checkin"
-        className="fixed left-1/2 bottom-5 -translate-x-1/2 z-40 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white shadow-lg backdrop-blur hover:bg-white/15 active:scale-[0.99]"
-      >
-        <PlusIcon className="h-5 w-5" />
-        New check-in
-      </Link>
+      {/* Bottom-center New Check-in FAB */}
+      <div className="fixed inset-x-0 bottom-5 z-40 flex justify-center pointer-events-none">
+        <Link
+          href="/new-checkin"
+          className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 py-3 text-sm font-semibold hover:bg-white/15 active:scale-[0.99]"
+        >
+          <PlusIcon className="h-5 w-5" />
+          New check-in
+        </Link>
+      </div>
+
+      {/* ADMIN LOGIN MODAL */}
+      {showAdminLogin && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => !adminBusy && setShowAdminLogin(false)}
+          />
+          <div className="absolute left-1/2 top-1/2 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-white/20 bg-black p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-lg font-semibold">Admin</div>
+              <button
+                className="rounded border border-white/20 px-3 py-1 text-sm hover:bg-white/10 disabled:opacity-50"
+                disabled={adminBusy}
+                onClick={() => setShowAdminLogin(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-2">
+              <div className="text-sm text-white/70">Password</div>
+              <input
+                className="w-full rounded border border-white/20 bg-black px-4 py-3 text-white text-base outline-none focus:border-white/40"
+                type="password"
+                value={adminPw}
+                onChange={(e) => setAdminPw(e.target.value)}
+                placeholder="Enter admin password"
+                autoFocus
+              />
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <button
+                className="flex-1 rounded border border-white/20 bg-white/5 px-4 py-3 text-sm font-semibold hover:bg-white/10 disabled:opacity-50"
+                disabled={adminBusy || !adminPw.trim()}
+                onClick={adminLogin}
+              >
+                Log in
+              </button>
+
+              <button
+                className="rounded border border-white/20 px-4 py-3 text-sm hover:bg-white/10 disabled:opacity-50"
+                disabled={adminBusy}
+                onClick={adminLogout}
+                title="Clears admin cookie"
+              >
+                Log out
+              </button>
+            </div>
+
+            <div className="mt-3 text-xs text-white/50">
+              Tip: long-press the logo anytime to open this.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -274,7 +439,7 @@ function VisitCard({
   const [showExtendPaynow, setShowExtendPaynow] = useState(false);
   const [selectedSeatNos, setSelectedSeatNos] = useState<number[]>([]);
 
-  // partial-leave modal (ONLY works when seats exist)
+  // partial-leave modal (extensions scenario)
   const [showLeaveCount, setShowLeaveCount] = useState(false);
   const [leaveCount, setLeaveCount] = useState(1);
 
@@ -392,8 +557,8 @@ function VisitCard({
       alert("Select at least 1 seat to extend.");
       return;
     }
-    if (!confirm("Collect payment and extend?")) return;
 
+    // (you asked earlier: no confirm() for cash — keep confirm out)
     setBusy(true);
     try {
       await rpcExtendSeatsAndCollectPayment({
@@ -438,7 +603,7 @@ function VisitCard({
             </span>
           </div>
 
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             <button
               onClick={addDrink}
               disabled={busy || v.drinks_collected >= v.pax}
