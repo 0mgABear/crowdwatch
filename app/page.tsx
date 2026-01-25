@@ -3,16 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { QRCodeCanvas } from "qrcode.react";
+
 import { supabase } from "@/lib/supabaseClient";
 import {
   rpcCollectDrink,
   rpcEndSeat,
   rpcExtendSeatsAndCollectPayment,
 } from "@/lib/rpc";
+import { buildPayNowPayload } from "@/lib/paynow";
 
 type Seat = { seat_no: number; end_time: string };
-
 type Visit = {
   id: string;
   name: string;
@@ -65,18 +66,18 @@ function PlusIcon({ className = "" }: { className?: string }) {
 }
 
 export default function DashboardPage() {
-  const router = useRouter();
-
   const [visits, setVisits] = useState<Visit[]>([]);
   const [paynowUen, setPaynowUen] = useState<string | null>(null);
   const [extensionPrice, setExtensionPrice] = useState<number>(5);
   const [drinkProductId, setDrinkProductId] = useState<string | null>(null);
 
-  // admin auth
-  const [adminAuthed, setAdminAuthed] = useState(false);
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  // admin modal
+  const [adminOpen, setAdminOpen] = useState(false);
   const [adminPw, setAdminPw] = useState("");
   const [adminBusy, setAdminBusy] = useState(false);
+  const [adminAuthed, setAdminAuthed] = useState<boolean | null>(null);
+
+  const pressTimer = useRef<number | null>(null);
 
   async function loadPaynowAndPrices() {
     const { data: s } = await supabase
@@ -132,9 +133,8 @@ export default function DashboardPage() {
     const drinksMap = new Map<string, number>();
     if (drinkProductId) {
       (vp ?? []).forEach((row: any) => {
-        if (row.product_id === drinkProductId) {
+        if (row.product_id === drinkProductId)
           drinksMap.set(row.visit_id, row.qty);
-        }
       });
     }
 
@@ -155,20 +155,9 @@ export default function DashboardPage() {
     );
   }
 
-  // check admin cookie
-  async function refreshAdminMe() {
-    try {
-      const r = await fetch("/api/admin/me", { method: "GET" });
-      setAdminAuthed(r.ok);
-    } catch {
-      setAdminAuthed(false);
-    }
-  }
-
   useEffect(() => {
     loadPaynowAndPrices().catch(console.error);
     loadDrinkProductId().catch(console.error);
-    refreshAdminMe().catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -198,7 +187,6 @@ export default function DashboardPage() {
     };
   }, [drinkProductId]);
 
-  // total pax inside (respects partial checkouts if seats exist)
   const totalPax = useMemo(() => {
     const now = Date.now();
     return visits.reduce((sum, v) => {
@@ -212,45 +200,18 @@ export default function DashboardPage() {
 
   const capColor =
     totalPax <= 8
-      ? "text-green-400"
+      ? "text-green-300"
       : totalPax <= 15
-        ? "text-orange-400"
-        : "text-red-400";
+        ? "text-orange-300"
+        : "text-red-300";
 
-  // long-press logo to open admin login
-  const pressTimer = useRef<number | null>(null);
-  const longPressFired = useRef(false);
-
-  function clearPressTimer() {
-    if (pressTimer.current) {
-      window.clearTimeout(pressTimer.current);
-      pressTimer.current = null;
-    }
-  }
-
-  function onLogoPointerDown() {
-    longPressFired.current = false;
-    clearPressTimer();
-    pressTimer.current = window.setTimeout(() => {
-      longPressFired.current = true;
-      setShowAdminLogin(true);
-    }, 2000);
-  }
-
-  function onLogoPointerUpOrCancel() {
-    clearPressTimer();
-  }
-
-  function onLogoClick() {
-    // if long press opened modal, don't navigate
-    if (longPressFired.current) return;
-    router.push("/");
+  async function refreshAdminAuthed() {
+    const r = await fetch("/api/admin/me", { cache: "no-store" });
+    const j = await r.json();
+    setAdminAuthed(!!j.authed);
   }
 
   async function adminLogin() {
-    if (adminBusy) return;
-    if (!adminPw.trim()) return;
-
     setAdminBusy(true);
     try {
       const r = await fetch("/api/admin/login", {
@@ -258,48 +219,58 @@ export default function DashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: adminPw }),
       });
-
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        alert(j?.error ?? "Login failed");
-        return;
-      }
-
-      setAdminAuthed(true);
-      setShowAdminLogin(false);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error ?? "Login failed");
+      await refreshAdminAuthed();
+      setAdminOpen(false);
       setAdminPw("");
+      window.location.href = "/admin";
+    } catch (e: any) {
+      alert(e.message ?? "Login failed");
     } finally {
       setAdminBusy(false);
     }
   }
 
   async function adminLogout() {
-    if (adminBusy) return;
     setAdminBusy(true);
     try {
       await fetch("/api/admin/logout", { method: "POST" });
-      setAdminAuthed(false);
-      setShowAdminLogin(false);
+      await refreshAdminAuthed();
+      setAdminOpen(false);
       setAdminPw("");
     } finally {
       setAdminBusy(false);
     }
   }
 
+  function startLongPress() {
+    if (pressTimer.current) window.clearTimeout(pressTimer.current);
+    pressTimer.current = window.setTimeout(async () => {
+      setAdminOpen(true);
+      await refreshAdminAuthed().catch(() => setAdminAuthed(false));
+    }, 650);
+  }
+
+  function cancelLongPress() {
+    if (pressTimer.current) window.clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  }
+
   return (
-    <div className="px-4 py-4 sm:px-6 sm:py-6 space-y-4 max-w-3xl mx-auto pb-28">
+    <div className="px-4 py-4 sm:px-6 sm:py-6 space-y-4 max-w-3xl mx-auto pb-24">
       {/* HEADER */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
             type="button"
-            aria-label="Home (long-press for admin)"
-            className="shrink-0"
-            onPointerDown={onLogoPointerDown}
-            onPointerUp={onLogoPointerUpOrCancel}
-            onPointerCancel={onLogoPointerUpOrCancel}
-            onPointerLeave={onLogoPointerUpOrCancel}
-            onClick={onLogoClick}
+            aria-label="Home / Admin"
+            onMouseDown={startLongPress}
+            onMouseUp={cancelLongPress}
+            onMouseLeave={cancelLongPress}
+            onTouchStart={startLongPress}
+            onTouchEnd={cancelLongPress}
+            className="rounded-full"
           >
             <Image
               src="/patacat.jpg"
@@ -307,24 +278,20 @@ export default function DashboardPage() {
               width={40}
               height={40}
               className="rounded-full border border-white/20"
-              priority
             />
           </button>
 
-          <div className="min-w-0">
-            <div className="text-lg font-semibold leading-tight">
-              CrowdWatch
+          <div>
+            <div className="text-lg font-semibold">CrowdWatch</div>
+            <div className="text-xs text-white/50">
+              {adminAuthed ? "Admin" : ""}
             </div>
-            {adminAuthed && (
-              <div className="text-xs text-white/50 leading-tight">Admin</div>
-            )}
           </div>
         </div>
 
-        {/* capacity top-right */}
         <div className={`flex items-center gap-2 ${capColor}`}>
-          <PersonIcon className="h-5 w-5" />
-          <span className="text-2xl font-bold tabular-nums">{totalPax}</span>
+          <PersonIcon className="h-6 w-6" />
+          <div className="text-2xl font-bold tabular-nums">{totalPax}</div>
         </div>
       </div>
 
@@ -333,7 +300,6 @@ export default function DashboardPage() {
         {visits.length === 0 && (
           <div className="opacity-60">No active visits</div>
         )}
-
         {visits.map((v) => (
           <VisitCard
             key={v.id}
@@ -346,69 +312,79 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Bottom-center New Check-in FAB */}
-      <div className="fixed inset-x-0 bottom-5 z-40 flex justify-center pointer-events-none">
+      {/* Bottom center New check-in */}
+      <div className="fixed inset-x-0 bottom-6 z-40 flex justify-center pointer-events-none">
         <Link
           href="/new-checkin"
-          className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 py-3 text-sm font-semibold hover:bg-white/15 active:scale-[0.99]"
+          className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 py-3 text-sm font-semibold backdrop-blur hover:bg-white/15"
         >
           <PlusIcon className="h-5 w-5" />
           New check-in
         </Link>
       </div>
 
-      {/* ADMIN LOGIN MODAL */}
-      {showAdminLogin && (
+      {/* ADMIN MODAL */}
+      {adminOpen && (
         <div className="fixed inset-0 z-50">
           <div
-            className="absolute inset-0 bg-black/60"
-            onClick={() => !adminBusy && setShowAdminLogin(false)}
+            className="absolute inset-0 bg-black/70"
+            onClick={() => !adminBusy && setAdminOpen(false)}
           />
           <div className="absolute left-1/2 top-1/2 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-white/20 bg-black p-4">
             <div className="flex items-center justify-between">
-              <div className="text-lg font-semibold">Admin</div>
+              <div>
+                <div className="text-lg font-semibold">Admin</div>
+                <div className="text-sm text-white/60">
+                  Long-press logo anytime to open.
+                </div>
+              </div>
               <button
                 className="rounded border border-white/20 px-3 py-1 text-sm hover:bg-white/10 disabled:opacity-50"
                 disabled={adminBusy}
-                onClick={() => setShowAdminLogin(false)}
+                onClick={() => setAdminOpen(false)}
               >
                 Close
               </button>
             </div>
 
-            <div className="mt-3 space-y-2">
-              <div className="text-sm text-white/70">Password</div>
-              <input
-                className="w-full rounded border border-white/20 bg-black px-4 py-3 text-white text-base outline-none focus:border-white/40"
-                type="password"
-                value={adminPw}
-                onChange={(e) => setAdminPw(e.target.value)}
-                placeholder="Enter admin password"
-                autoFocus
-              />
-            </div>
-
-            <div className="mt-4 flex gap-2">
-              <button
-                className="flex-1 rounded border border-white/20 bg-white/5 px-4 py-3 text-sm font-semibold hover:bg-white/10 disabled:opacity-50"
-                disabled={adminBusy || !adminPw.trim()}
-                onClick={adminLogin}
-              >
-                Log in
-              </button>
-
-              <button
-                className="rounded border border-white/20 px-4 py-3 text-sm hover:bg-white/10 disabled:opacity-50"
-                disabled={adminBusy}
-                onClick={adminLogout}
-                title="Clears admin cookie"
-              >
-                Log out
-              </button>
-            </div>
-
-            <div className="mt-3 text-xs text-white/50">
-              Tip: long-press the logo anytime to open this.
+            <div className="mt-4 space-y-3">
+              {!adminAuthed ? (
+                <>
+                  <div className="text-sm text-white/70">Password</div>
+                  <input
+                    className="w-full rounded border border-white/20 bg-black px-4 py-3 text-white text-sm outline-none"
+                    type="password"
+                    value={adminPw}
+                    onChange={(e) => setAdminPw(e.target.value)}
+                    placeholder="Enter admin password"
+                  />
+                  <button
+                    disabled={adminBusy || !adminPw}
+                    onClick={adminLogin}
+                    className="w-full rounded border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold hover:bg-white/15 disabled:opacity-50"
+                  >
+                    Log in
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="text-sm text-white/70">You’re logged in.</div>
+                  <Link
+                    href="/admin"
+                    className="block w-full rounded border border-white/20 bg-white/10 px-4 py-3 text-center text-sm font-semibold hover:bg-white/15"
+                    onClick={() => setAdminOpen(false)}
+                  >
+                    Go to Admin page
+                  </Link>
+                  <button
+                    disabled={adminBusy}
+                    onClick={adminLogout}
+                    className="w-full rounded border border-white/20 px-4 py-3 text-sm font-semibold hover:bg-white/10 disabled:opacity-50"
+                  >
+                    Log out
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -433,13 +409,11 @@ function VisitCard({
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
 
-  // extend modal
   const [showExtend, setShowExtend] = useState(false);
   const [extendHours, setExtendHours] = useState(1);
   const [showExtendPaynow, setShowExtendPaynow] = useState(false);
   const [selectedSeatNos, setSelectedSeatNos] = useState<number[]>([]);
 
-  // partial-leave modal (extensions scenario)
   const [showLeaveCount, setShowLeaveCount] = useState(false);
   const [leaveCount, setLeaveCount] = useState(1);
 
@@ -463,6 +437,35 @@ function VisitCard({
     return v.est_end_time;
   }, [activeSeats, v.est_end_time]);
 
+  function fmtMs(ms: number) {
+    const t = Math.max(0, ms);
+    const totalSec = Math.floor(t / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+
+  const seatTimers = useMemo(() => {
+    if (!hasExtensions) return null;
+
+    // group by end_time (unique checkout moments)
+    const map = new Map<number, number>(); // endMs -> count
+    for (const s of activeSeats) {
+      const endMs = new Date(s.end_time).getTime();
+      map.set(endMs, (map.get(endMs) ?? 0) + 1);
+    }
+
+    const items = Array.from(map.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([endMs, count]) => ({
+        endMs,
+        count,
+        label: `${count} pax · ${fmtMs(endMs - now)}`,
+      }));
+
+    return items;
+  }, [hasExtensions, activeSeats, now]);
+
   const mmss = useMemo(() => {
     if (!groupEndTimeIso) return "--:--";
     const ms = new Date(groupEndTimeIso).getTime() - now;
@@ -474,6 +477,7 @@ function VisitCard({
   }, [groupEndTimeIso, now]);
 
   const timerLabel = peopleLeft <= 1 ? "ends" : "group ends";
+  const drinksOk = v.drinks_collected >= v.pax;
 
   async function addDrink() {
     if (busy) return;
@@ -508,11 +512,6 @@ function VisitCard({
   }
 
   async function endSomePeople(count: number) {
-    if (activeSeats.length === 0) {
-      alert("Partial checkout requires seat rows (extensions).");
-      return;
-    }
-
     const toEnd = activeSeats
       .slice()
       .sort((a, b) => a.seat_no - b.seat_no)
@@ -520,9 +519,8 @@ function VisitCard({
 
     setBusy(true);
     try {
-      for (const s of toEnd) {
+      for (const s of toEnd)
         await rpcEndSeat({ visitId: v.id, seatNo: s.seat_no });
-      }
       await onReload();
       setShowLeaveCount(false);
     } catch (e: any) {
@@ -535,12 +533,7 @@ function VisitCard({
   async function onEndPressed() {
     if (busy) return;
 
-    if (!hasExtensions) {
-      await endEntireVisit();
-      return;
-    }
-
-    if (peopleLeft <= 1) {
+    if (!hasExtensions || peopleLeft <= 1) {
       await endEntireVisit();
       return;
     }
@@ -553,12 +546,10 @@ function VisitCard({
 
   async function extend(method: "CASH" | "PAYNOW") {
     if (busy) return;
-    if (selectedSeatNos.length === 0) {
-      alert("Select at least 1 seat to extend.");
-      return;
-    }
+    if (selectedSeatNos.length === 0)
+      return alert("Select at least 1 seat to extend.");
+    if (!confirm("Collect payment and extend?")) return;
 
-    // (you asked earlier: no confirm() for cash — keep confirm out)
     setBusy(true);
     try {
       await rpcExtendSeatsAndCollectPayment({
@@ -577,8 +568,6 @@ function VisitCard({
       setBusy(false);
     }
   }
-
-  const drinksOk = v.drinks_collected >= v.pax;
 
   return (
     <div className="rounded-lg border border-white/15 bg-white/5 p-4">
@@ -603,7 +592,7 @@ function VisitCard({
             </span>
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 flex gap-2">
             <button
               onClick={addDrink}
               disabled={busy || v.drinks_collected >= v.pax}
@@ -643,8 +632,21 @@ function VisitCard({
         </div>
 
         <div className="text-right shrink-0">
-          <div className="text-4xl font-bold tabular-nums">{mmss}</div>
-          <div className="text-sm opacity-70">{timerLabel}</div>
+          {/* Big timer = earliest checkout when seats exist, else group timer */}
+          <div className="text-4xl font-bold tabular-nums">
+            {seatTimers?.[0]?.label.split(" · ")[1] ?? mmss}
+          </div>
+          <div className="text-sm opacity-70">
+            {hasExtensions ? "next checkout" : timerLabel}
+          </div>
+
+          {seatTimers && seatTimers.length > 1 && (
+            <div className="mt-2 space-y-1 text-xs text-white/60">
+              {seatTimers.slice(1).map((t) => (
+                <div key={t.endMs}>{t.label}</div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -738,7 +740,7 @@ function VisitCard({
             className="absolute inset-0 bg-black/60"
             onClick={() => !busy && setShowExtend(false)}
           />
-          <div className="absolute left-1/2 top-1/2 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 border rounded bg-black p-4">
+          <div className="absolute left-1/2 top-1/2 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-white/20 bg-black p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="text-lg font-semibold">Extend: {v.name}</div>
               <button
@@ -790,7 +792,7 @@ function VisitCard({
               <div className="flex items-center justify-between">
                 <div className="text-sm opacity-70">Hours to add</div>
                 <input
-                  className="border rounded p-2 w-24 text-right"
+                  className="border rounded p-2 w-24 text-right bg-black"
                   type="number"
                   min={1}
                   value={extendHours}
@@ -837,9 +839,25 @@ function VisitCard({
 
               {showExtendPaynow && (
                 <div className="mt-4 space-y-3">
-                  <div className="text-sm opacity-70">
-                    Confirm on your PayNow device, then press confirm.
-                  </div>
+                  {!paynowUen ? (
+                    <div className="text-sm text-red-400">
+                      Missing PayNow UEN in settings.
+                    </div>
+                  ) : (
+                    <div className="flex justify-center bg-white p-3 rounded">
+                      <QRCodeCanvas
+                        value={buildPayNowPayload({
+                          uen: paynowUen,
+                          amount: extendAmount,
+                          merchantName: "Shelter",
+                          merchantCity: "Singapore",
+                          editable: false,
+                        })}
+                        size={240}
+                        includeMargin
+                      />
+                    </div>
+                  )}
 
                   <button
                     className="w-full border rounded p-2 disabled:opacity-50"

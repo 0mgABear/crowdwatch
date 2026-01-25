@@ -1,5 +1,3 @@
-export const runtime = "nodejs";
-
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
@@ -7,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function POST(req: Request) {
   const { password } = await req.json();
+
   if (!password) {
     return NextResponse.json({ error: "Missing password" }, { status: 400 });
   }
@@ -25,13 +24,15 @@ export async function POST(req: Request) {
   }
 
   const ok = await bcrypt.compare(password, data.admin_password_hash);
-  if (!ok)
+  if (!ok) {
     return NextResponse.json({ error: "Invalid password" }, { status: 401 });
+  }
 
+  const isProd = process.env.NODE_ENV === "production";
   const jar = await cookies();
   jar.set("admin_session", "true", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isProd,
     sameSite: "strict",
     path: "/",
     maxAge: 60 * 60 * 8,
