@@ -47,6 +47,42 @@ function PersonIcon({ className = "" }: { className?: string }) {
   );
 }
 
+function MoneyBagIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M9 7c1.8 1 4.2 1 6 0"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10 4h4"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M8.5 9.5c-2 1.8-3 4-3 6.4 0 3.3 2.6 5.1 6.5 5.1s6.5-1.8 6.5-5.1c0-2.4-1-4.6-3-6.4"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10.2 13.7c0-1 0.8-1.7 1.8-1.7s1.8 0.7 1.8 1.7c0 1.7-3.6 1-3.6 2.7 0 0.9 0.8 1.6 1.8 1.6s1.8-0.7 1.8-1.6"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function PlusIcon({ className = "" }: { className?: string }) {
   return (
     <svg
@@ -394,14 +430,25 @@ export default function DashboardPage() {
       </div>
 
       {/* Bottom center New check-in */}
+      {/* Bottom center actions */}
       <div className="fixed inset-x-0 bottom-6 z-40 flex justify-center pointer-events-none">
-        <Link
-          href="/new-checkin"
-          className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 py-3 text-sm font-semibold backdrop-blur hover:bg-white/15"
-        >
-          <PlusIcon className="h-5 w-5" />
-          New check-in
-        </Link>
+        <div className="pointer-events-auto inline-flex items-center gap-3">
+          <Link
+            href="/new-checkin"
+            aria-label="New check-in"
+            className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur hover:bg-white/15"
+          >
+            <PersonIcon className="h-6 w-6" />
+          </Link>
+
+          <Link
+            href="/new-sale"
+            aria-label="New sale"
+            className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur hover:bg-white/15"
+          >
+            <MoneyBagIcon className="h-6 w-6" />
+          </Link>
+        </div>
       </div>
 
       {/* ADMIN MODAL */}
