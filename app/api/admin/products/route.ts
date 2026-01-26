@@ -84,7 +84,7 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  await requireAdmin(); // whatever you're using in this file already
+  await requireAdmin();
 
   const { id } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });

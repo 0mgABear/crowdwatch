@@ -13,7 +13,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing password" }, { status: 400 });
     }
 
-    // sanity check envs (helps on Vercel)
     if (
       !process.env.NEXT_PUBLIC_SUPABASE_URL ||
       !process.env.SUPABASE_SERVICE_ROLE_KEY

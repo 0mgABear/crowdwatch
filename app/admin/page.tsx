@@ -243,7 +243,6 @@ export default function AdminPage() {
                   />
                 </div>
 
-                {/* Right side: delete icon + toggle */}
                 <div className="ml-auto flex items-center gap-2">
                   <button
                     disabled={busy}
@@ -315,7 +314,6 @@ export default function AdminPage() {
               onChange={(e) => setNewName(e.target.value)}
             />
 
-            {/* Price with $ (same style) */}
             <div className="w-full rounded border border-white/20 bg-black px-4 py-3 flex items-center">
               <span className="text-white/50 mr-2">$</span>
               <input

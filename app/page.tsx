@@ -13,7 +13,7 @@ import {
 } from "@/lib/rpc";
 import { buildPayNowPayload } from "@/lib/paynow";
 
-type Seat = { seat_no: number; end_time: string };
+type Seat = { seat_no: number; end_time: string | null };
 type Visit = {
   id: string;
   name: string;
@@ -77,7 +77,23 @@ export default function DashboardPage() {
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminAuthed, setAdminAuthed] = useState<boolean | null>(null);
 
+  // Today dropdown
+  const [todayOpen, setTodayOpen] = useState(false);
+  const [todayTotals, setTodayTotals] = useState<{
+    cash: number;
+    paynow: number;
+    groups: number;
+    people: number;
+  } | null>(null);
+
   const pressTimer = useRef<number | null>(null);
+
+  async function loadTodayTotals() {
+    const r = await fetch("/api/totals/today", { cache: "no-store" });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j?.error ?? "Failed to load totals");
+    setTodayTotals(j?.totals ?? null);
+  }
 
   async function loadPaynowAndPrices() {
     const { data: s } = await supabase
@@ -133,8 +149,9 @@ export default function DashboardPage() {
     const drinksMap = new Map<string, number>();
     if (drinkProductId) {
       (vp ?? []).forEach((row: any) => {
-        if (row.product_id === drinkProductId)
+        if (row.product_id === drinkProductId) {
           drinksMap.set(row.visit_id, row.qty);
+        }
       });
     }
 
@@ -158,6 +175,7 @@ export default function DashboardPage() {
   useEffect(() => {
     loadPaynowAndPrices().catch(console.error);
     loadDrinkProductId().catch(console.error);
+    loadTodayTotals().catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -168,7 +186,10 @@ export default function DashboardPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "visits" },
-        () => loadDashboard(),
+        () => {
+          loadDashboard();
+          loadTodayTotals().catch(console.error);
+        },
       )
       .on(
         "postgres_changes",
@@ -180,6 +201,11 @@ export default function DashboardPage() {
         { event: "*", schema: "public", table: "visit_seats" },
         () => loadDashboard(),
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "payments" },
+        () => loadTodayTotals().catch(console.error),
+      )
       .subscribe();
 
     return () => {
@@ -187,14 +213,15 @@ export default function DashboardPage() {
     };
   }, [drinkProductId]);
 
-  // ✅ total pax counts “people left” (uses seats when present, else pax)
+  // total pax counts “people left” (uses seats when present, else pax)
   const totalPax = useMemo(() => {
     const now = Date.now();
     return visits.reduce((sum, v) => {
-      const activeSeats = (v.seats ?? []).filter(
-        (s) => new Date(s.end_time).getTime() > now,
-      );
-      const inside = activeSeats.length > 0 ? activeSeats.length : v.pax;
+      const activeSeats = (v.seats ?? []).filter((s) => {
+        if (!s.end_time) return true;
+        return new Date(s.end_time).getTime() > now;
+      });
+      const inside = (v.seats?.length ?? 0) > 0 ? activeSeats.length : v.pax;
       return sum + inside;
     }, 0);
   }, [visits]);
@@ -258,6 +285,8 @@ export default function DashboardPage() {
     pressTimer.current = null;
   }
 
+  const t = todayTotals ?? { cash: 0, paynow: 0, groups: 0, people: 0 };
+
   return (
     <div className="px-4 py-4 sm:px-6 sm:py-6 space-y-4 max-w-3xl mx-auto pb-24">
       {/* HEADER */}
@@ -294,6 +323,57 @@ export default function DashboardPage() {
           <PersonIcon className="h-6 w-6" />
           <div className="text-2xl font-bold tabular-nums">{totalPax}</div>
         </div>
+      </div>
+
+      {/* Today collapsible */}
+      <div className="rounded-lg border border-white/15 bg-white/5 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setTodayOpen((x) => !x)}
+          className="w-full flex items-center justify-between px-4 py-3 text-left"
+        >
+          <div className="font-semibold">Today</div>
+          <div className="text-white/60">{todayOpen ? "▴" : "▾"}</div>
+        </button>
+
+        {todayOpen && (
+          <div className="px-4 pb-4">
+            <div className="grid grid-cols-2 gap-y-2 text-sm">
+              <div className="text-white/70">Cash</div>
+              <div className="text-right font-semibold tabular-nums">
+                ${t.cash.toFixed(2)}
+              </div>
+
+              <div className="text-white/70">PayNow</div>
+              <div className="text-right font-semibold tabular-nums">
+                ${t.paynow.toFixed(2)}
+              </div>
+
+              <div className="text-white/70">Groups</div>
+              <div className="text-right font-semibold tabular-nums">
+                {t.groups}
+              </div>
+
+              <div className="text-white/70">People</div>
+              <div className="text-right font-semibold tabular-nums">
+                {t.people}
+              </div>
+            </div>
+
+            <button
+              className="mt-3 w-full rounded border border-white/15 bg-white/5 px-3 py-2 text-sm hover:bg-white/10"
+              onClick={() => loadTodayTotals().catch(console.error)}
+            >
+              Refresh totals
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="h-px w-full bg-white/10" />
+
+      <div className="text-xl sm:text-2xl font-bold tracking-wide text-white">
+        Current visits
       </div>
 
       {/* VISITS */}
@@ -410,13 +490,11 @@ function VisitCard({
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
 
-  // extend modal
   const [showExtend, setShowExtend] = useState(false);
   const [extendHours, setExtendHours] = useState(1);
   const [showExtendPaynow, setShowExtendPaynow] = useState(false);
   const [selectedSeatNos, setSelectedSeatNos] = useState<number[]>([]);
 
-  // partial leave (only when seats exist)
   const [showLeaveCount, setShowLeaveCount] = useState(false);
   const [leaveCount, setLeaveCount] = useState(1);
 
@@ -425,9 +503,42 @@ function VisitCard({
     return () => clearInterval(t);
   }, []);
 
+  const seatRows = useMemo(() => {
+    return [...(v.seats ?? [])].sort((a, b) => a.seat_no - b.seat_no);
+  }, [v.seats]);
+
   const activeSeats = useMemo(() => {
-    return (v.seats ?? []).filter((s) => new Date(s.end_time).getTime() > now);
-  }, [v.seats, now]);
+    return seatRows.filter((s) => {
+      if (!s.end_time) return true;
+      return new Date(s.end_time).getTime() > now;
+    });
+  }, [seatRows, now]);
+
+  const hasSeatRows = seatRows.length > 0;
+  const peopleLeft = hasSeatRows ? activeSeats.length : v.pax;
+
+  const canPartialLeave = hasSeatRows && peopleLeft > 1;
+
+  async function ensureSeatRows() {
+    if (hasSeatRows) return;
+
+    const endIso =
+      v.est_end_time ?? new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    const rows = Array.from({ length: v.pax }, (_, i) => ({
+      visit_id: v.id,
+      seat_no: i + 1,
+      end_time: endIso,
+    }));
+
+    const { error } = await supabase
+      .from("visit_seats")
+      .upsert(rows, { onConflict: "visit_id,seat_no" });
+
+    if (error) throw error;
+  }
+
+  const hasExtensions = hasSeatRows;
 
   const allSeatNos = useMemo(() => {
     return activeSeats.length > 0
@@ -437,13 +548,14 @@ function VisitCard({
 
   const needsSeatPicker = allSeatNos.length > 1;
 
-  const hasExtensions = activeSeats.length > 0;
-  const peopleLeft = hasExtensions ? activeSeats.length : v.pax;
-
   const groupEndTimeIso = useMemo(() => {
     if (activeSeats.length > 0) {
-      const maxMs = Math.max(...activeSeats.map((s) => +new Date(s.end_time)));
-      return new Date(maxMs).toISOString();
+      const maxMs = Math.max(
+        ...activeSeats
+          .map((s) => (s.end_time ? new Date(s.end_time).getTime() : NaN))
+          .filter((x) => Number.isFinite(x)),
+      );
+      if (Number.isFinite(maxMs)) return new Date(maxMs).toISOString();
     }
     return v.est_end_time;
   }, [activeSeats, v.est_end_time]);
@@ -459,21 +571,26 @@ function VisitCard({
   const seatTimers = useMemo(() => {
     if (!hasExtensions) return null;
 
-    // group by end_time (unique checkout moments)
+    const fallbackEndMs = groupEndTimeIso
+      ? new Date(groupEndTimeIso).getTime()
+      : null;
+
     const map = new Map<number, number>(); // endMs -> count
     for (const s of activeSeats) {
-      const endMs = new Date(s.end_time).getTime();
+      const endMs = s.end_time ? new Date(s.end_time).getTime() : fallbackEndMs;
+      if (endMs == null || !Number.isFinite(endMs)) continue;
       map.set(endMs, (map.get(endMs) ?? 0) + 1);
     }
 
-    return Array.from(map.entries())
+    const items = Array.from(map.entries())
       .sort((a, b) => a[0] - b[0])
       .map(([endMs, count]) => ({
         endMs,
-        count,
         label: `${count} pax · ${fmtMs(endMs - now)}`,
       }));
-  }, [hasExtensions, activeSeats, now]);
+
+    return items.length ? items : null;
+  }, [hasExtensions, activeSeats, now, groupEndTimeIso]);
 
   const mmss = useMemo(() => {
     if (!groupEndTimeIso) return "--:--";
@@ -539,10 +656,22 @@ function VisitCard({
   async function onEndPressed() {
     if (busy) return;
 
-    // no seat rows => must end whole visit (no safe partial without RLS changes)
-    if (!hasExtensions || peopleLeft <= 1) {
+    if (peopleLeft <= 1) {
       await endEntireVisit();
       return;
+    }
+
+    if (!hasSeatRows) {
+      try {
+        setBusy(true);
+        await ensureSeatRows();
+        await onReload();
+      } catch (e: any) {
+        alert(e.message ?? "Failed to enable partial checkout");
+        return;
+      } finally {
+        setBusy(false);
+      }
     }
 
     setLeaveCount(1);
@@ -623,8 +752,7 @@ function VisitCard({
               onClick={async () => {
                 if (!paynowUen) await loadPaynowAndPrices();
                 setExtendHours(1);
-
-                setSelectedSeatNos(allSeatNos); // ✅ auto-select for 1 pax too
+                setSelectedSeatNos(allSeatNos); // auto-select
                 setShowExtendPaynow(false);
                 setShowExtend(true);
               }}
@@ -637,7 +765,6 @@ function VisitCard({
         </div>
 
         <div className="text-right shrink-0">
-          {/* Big timer = earliest checkout when seats exist, else group timer */}
           <div className="text-4xl font-bold tabular-nums">
             {seatTimers?.[0]?.label.split(" · ")[1] ?? mmss}
           </div>
@@ -669,6 +796,12 @@ function VisitCard({
             <div className="mt-1 text-sm text-white/60">
               {v.name} has {peopleLeft} people left.
             </div>
+
+            {!canPartialLeave && (
+              <div className="mt-1 text-xs text-white/50">
+                Partial checkout unavailable.
+              </div>
+            )}
 
             <div className="mt-4 flex flex-wrap gap-2">
               {[1, 2, 3].map((n) => (
@@ -714,9 +847,13 @@ function VisitCard({
                   if (leaveCount >= peopleLeft) {
                     await endEntireVisit();
                     setShowLeaveCount(false);
-                  } else {
-                    await endSomePeople(leaveCount);
+                    return;
                   }
+                  if (!canPartialLeave) {
+                    alert("Partial checkout isn't available for this visit.");
+                    return;
+                  }
+                  await endSomePeople(leaveCount);
                 }}
                 className="flex-1 rounded border border-white/20 bg-white/5 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
               >
@@ -761,7 +898,6 @@ function VisitCard({
             </div>
 
             <div className="space-y-3">
-              {/* ✅ only show seat picker when >1 pax */}
               {needsSeatPicker && (
                 <div className="space-y-2">
                   <div className="text-sm opacity-70">
