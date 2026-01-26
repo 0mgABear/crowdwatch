@@ -42,6 +42,7 @@ export default function NewSalePage() {
       const EXCLUDE_FROM_SALES = new Set([
         "First hour",
         "Subsequent hour",
+        "Extension hour",
         "Drink",
       ]);
 
