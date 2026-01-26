@@ -24,6 +24,8 @@ export default function NewCheckinPage() {
   const [name, setName] = useState("");
   const [pax, setPax] = useState<string>("1");
   const [hours, setHours] = useState<string>("1");
+  const paxN = Math.max(1, Number(pax || 1));
+  const hoursN = Math.max(1, Number(hours || 1));
 
   const [visitId, setVisitId] = useState<string | null>(null);
 
@@ -34,6 +36,12 @@ export default function NewCheckinPage() {
   const [paynowUen, setPaynowUen] = useState<string | null>(null);
 
   const [showPaynow, setShowPaynow] = useState(false);
+
+  // Socks
+  const [socksQty, setSocksQty] = useState<string>("0"); // input string
+  const [socksProductId, setSocksProductId] = useState<string | null>(null);
+  const [socksPrice, setSocksPrice] = useState<number | null>(null);
+  const socksQtyN = Math.max(0, Math.min(paxN, Number(socksQty || 0))); // numeric
 
   useEffect(() => {
     (async () => {
@@ -55,18 +63,49 @@ export default function NewCheckinPage() {
 
       setFirstHourPrice(first?.price != null ? Number(first.price) : null);
       setSubsequentHourPrice(sub?.price != null ? Number(sub.price) : null);
+
+      const { data: socks } = await supabase
+        .from("products")
+        .select("id,price")
+        .eq("name", "Socks")
+        .eq("active", true)
+        .single();
+
+      setSocksProductId(socks?.id ?? null);
+
+      if (socks?.id) setSocksProductId(socks.id);
+      if (socks?.price != null) setSocksPrice(Number(socks.price));
     })().catch(console.error);
   }, []);
 
-  const paxN = Math.max(1, Number(pax || 1));
-  const hoursN = Math.max(1, Number(hours || 1));
+  // Keep socks qty within 0..pax if pax changes
+  useEffect(() => {
+    setSocksQty((prev) => {
+      const n = Number(prev || 0);
+      if (!Number.isFinite(n)) return "0";
+      const clamped = Math.max(0, Math.min(paxN, Math.trunc(n)));
+      return String(clamped);
+    });
+  }, [paxN]);
 
-  const totalAmount = useMemo(() => {
+  const timeAmount = useMemo(() => {
     if (firstHourPrice == null) return null;
     if (hoursN === 1) return firstHourPrice * paxN;
     if (subsequentHourPrice == null) return null;
     return (firstHourPrice + (hoursN - 1) * subsequentHourPrice) * paxN;
   }, [firstHourPrice, subsequentHourPrice, paxN, hoursN]);
+
+  const socksAmount = useMemo(() => {
+    if (socksQtyN <= 0) return 0;
+    if (socksPrice == null) return null;
+    return socksPrice * socksQtyN;
+  }, [socksPrice, socksQtyN]);
+
+  const totalAmount = useMemo(() => {
+    if (timeAmount == null) return null;
+    if (socksAmount == null) return null;
+    return timeAmount + socksAmount;
+  }, [timeAmount, socksAmount]);
 
   async function cleanupDraft(id: string) {
     await supabase.from("visits").delete().eq("id", id).eq("status", "DRAFT");
@@ -86,6 +125,10 @@ export default function NewCheckinPage() {
           hoursN > 1 ? ' and "Subsequent hour"' : ""
         } are active.`,
       );
+      return;
+    }
+    if (socksQtyN > 0 && (!socksProductId || socksPrice == null)) {
+      alert('Socks pricing not found. Ensure product "Socks" is active.');
       return;
     }
 
@@ -119,6 +162,10 @@ export default function NewCheckinPage() {
         hours: hoursN,
         bufferMinutes: 10,
         method,
+        items:
+          socksQtyN > 0 && socksProductId
+            ? [{ productId: socksProductId, qty: socksQtyN }]
+            : [],
       });
 
       window.location.href = "/";
@@ -169,7 +216,6 @@ export default function NewCheckinPage() {
 
   return (
     <div className="px-4 py-4 sm:px-6 sm:py-6">
-      {/* ✅ single shared container for header + content so alignment matches on desktop */}
       <div className="max-w-xl mx-auto">
         {header}
 
@@ -222,6 +268,27 @@ export default function NewCheckinPage() {
               </div>
             </div>
 
+            {/* Socks */}
+            <div className="space-y-2">
+              <div className={label}>Socks needed (0–{paxN})</div>
+              <input
+                className={inputBase}
+                value={socksQty}
+                onChange={(e) =>
+                  setSocksQty(clampInt(e.target.value, 0, paxN) || "")
+                }
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              {socksPrice != null && (
+                <div className="text-xs text-white/50">
+                  Socks: ${socksPrice.toFixed(2)} each
+                </div>
+              )}
+            </div>
+
             <button
               className="w-full rounded border border-white/20 bg-white/5 px-4 py-3 text-base font-semibold hover:bg-white/10 disabled:opacity-50"
               disabled={busy}
@@ -238,9 +305,9 @@ export default function NewCheckinPage() {
               <div className="text-sm text-white/60 mb-2">Summary</div>
               <div className="text-3xl font-semibold">{name.trim()}</div>
 
-              {/* ✅ "1 Pax" instead of "Pax 1" */}
               <div className="mt-2 text-white/70">
                 {paxN} Pax · {hoursN} hour(s)
+                {socksQtyN > 0 ? ` · Socks x${socksQtyN}` : ""}
               </div>
 
               <div className="mt-3 text-4xl font-bold">
@@ -266,7 +333,6 @@ export default function NewCheckinPage() {
               </button>
             </div>
 
-            {/* PAYNOW POPUP */}
             {showPaynow && paynowUen && totalAmount != null && (
               <div className="fixed inset-0 z-50">
                 <div

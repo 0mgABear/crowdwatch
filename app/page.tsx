@@ -187,6 +187,7 @@ export default function DashboardPage() {
     };
   }, [drinkProductId]);
 
+  // ✅ total pax counts “people left” (uses seats when present, else pax)
   const totalPax = useMemo(() => {
     const now = Date.now();
     return visits.reduce((sum, v) => {
@@ -409,11 +410,13 @@ function VisitCard({
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
 
+  // extend modal
   const [showExtend, setShowExtend] = useState(false);
   const [extendHours, setExtendHours] = useState(1);
   const [showExtendPaynow, setShowExtendPaynow] = useState(false);
   const [selectedSeatNos, setSelectedSeatNos] = useState<number[]>([]);
 
+  // partial leave (only when seats exist)
   const [showLeaveCount, setShowLeaveCount] = useState(false);
   const [leaveCount, setLeaveCount] = useState(1);
 
@@ -425,6 +428,14 @@ function VisitCard({
   const activeSeats = useMemo(() => {
     return (v.seats ?? []).filter((s) => new Date(s.end_time).getTime() > now);
   }, [v.seats, now]);
+
+  const allSeatNos = useMemo(() => {
+    return activeSeats.length > 0
+      ? activeSeats.map((s) => s.seat_no)
+      : Array.from({ length: v.pax }, (_, i) => i + 1);
+  }, [activeSeats, v.pax]);
+
+  const needsSeatPicker = allSeatNos.length > 1;
 
   const hasExtensions = activeSeats.length > 0;
   const peopleLeft = hasExtensions ? activeSeats.length : v.pax;
@@ -455,25 +466,19 @@ function VisitCard({
       map.set(endMs, (map.get(endMs) ?? 0) + 1);
     }
 
-    const items = Array.from(map.entries())
+    return Array.from(map.entries())
       .sort((a, b) => a[0] - b[0])
       .map(([endMs, count]) => ({
         endMs,
         count,
         label: `${count} pax · ${fmtMs(endMs - now)}`,
       }));
-
-    return items;
   }, [hasExtensions, activeSeats, now]);
 
   const mmss = useMemo(() => {
     if (!groupEndTimeIso) return "--:--";
     const ms = new Date(groupEndTimeIso).getTime() - now;
-    const t = Math.max(0, ms);
-    const totalSec = Math.floor(t / 1000);
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
-    return `${m}:${String(s).padStart(2, "0")}`;
+    return fmtMs(ms);
   }, [groupEndTimeIso, now]);
 
   const timerLabel = peopleLeft <= 1 ? "ends" : "group ends";
@@ -519,8 +524,9 @@ function VisitCard({
 
     setBusy(true);
     try {
-      for (const s of toEnd)
+      for (const s of toEnd) {
         await rpcEndSeat({ visitId: v.id, seatNo: s.seat_no });
+      }
       await onReload();
       setShowLeaveCount(false);
     } catch (e: any) {
@@ -533,6 +539,7 @@ function VisitCard({
   async function onEndPressed() {
     if (busy) return;
 
+    // no seat rows => must end whole visit (no safe partial without RLS changes)
     if (!hasExtensions || peopleLeft <= 1) {
       await endEntireVisit();
       return;
@@ -546,8 +553,11 @@ function VisitCard({
 
   async function extend(method: "CASH" | "PAYNOW") {
     if (busy) return;
-    if (selectedSeatNos.length === 0)
-      return alert("Select at least 1 seat to extend.");
+
+    if (needsSeatPicker && selectedSeatNos.length === 0) {
+      alert("Select at least 1 seat to extend.");
+      return;
+    }
     if (!confirm("Collect payment and extend?")) return;
 
     setBusy(true);
@@ -614,12 +624,7 @@ function VisitCard({
                 if (!paynowUen) await loadPaynowAndPrices();
                 setExtendHours(1);
 
-                const seats =
-                  activeSeats.length > 0
-                    ? activeSeats.map((s) => s.seat_no)
-                    : Array.from({ length: v.pax }, (_, i) => i + 1);
-
-                setSelectedSeatNos(seats);
+                setSelectedSeatNos(allSeatNos); // ✅ auto-select for 1 pax too
                 setShowExtendPaynow(false);
                 setShowExtend(true);
               }}
@@ -756,38 +761,38 @@ function VisitCard({
             </div>
 
             <div className="space-y-3">
-              <div className="space-y-2">
-                <div className="text-sm opacity-70">
-                  Who is extending ({selectedSeatNos.length})
-                </div>
+              {/* ✅ only show seat picker when >1 pax */}
+              {needsSeatPicker && (
+                <div className="space-y-2">
+                  <div className="text-sm opacity-70">
+                    Who is extending ({selectedSeatNos.length})
+                  </div>
 
-                <div className="flex flex-wrap gap-2">
-                  {(activeSeats.length > 0
-                    ? activeSeats.map((s) => s.seat_no)
-                    : Array.from({ length: v.pax }, (_, i) => i + 1)
-                  ).map((seatNo) => {
-                    const selected = selectedSeatNos.includes(seatNo);
-                    return (
-                      <button
-                        key={seatNo}
-                        className={`border rounded px-2 py-1 text-xs disabled:opacity-50 ${
-                          selected ? "bg-white/10" : ""
-                        }`}
-                        disabled={busy}
-                        onClick={() => {
-                          setSelectedSeatNos((prev) =>
-                            prev.includes(seatNo)
-                              ? prev.filter((x) => x !== seatNo)
-                              : [...prev, seatNo].sort((a, b) => a - b),
-                          );
-                        }}
-                      >
-                        S{seatNo}
-                      </button>
-                    );
-                  })}
+                  <div className="flex flex-wrap gap-2">
+                    {allSeatNos.map((seatNo) => {
+                      const selected = selectedSeatNos.includes(seatNo);
+                      return (
+                        <button
+                          key={seatNo}
+                          className={`border rounded px-2 py-1 text-xs disabled:opacity-50 ${
+                            selected ? "bg-white/10" : ""
+                          }`}
+                          disabled={busy}
+                          onClick={() => {
+                            setSelectedSeatNos((prev) =>
+                              prev.includes(seatNo)
+                                ? prev.filter((x) => x !== seatNo)
+                                : [...prev, seatNo].sort((a, b) => a - b),
+                            );
+                          }}
+                        >
+                          S{seatNo}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="flex items-center justify-between">
                 <div className="text-sm opacity-70">Hours to add</div>

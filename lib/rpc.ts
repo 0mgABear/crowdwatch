@@ -7,6 +7,7 @@ export async function rpcStartVisit(params: {
   hours: number;
   bufferMinutes?: number;
   method: "CASH" | "PAYNOW";
+  items?: Array<{ productId: string; qty: number }>;
 }) {
   const { data, error } = await supabase.rpc(
     "start_visit_and_collect_payment",
@@ -15,6 +16,10 @@ export async function rpcStartVisit(params: {
       p_hours: params.hours,
       p_buffer_minutes: params.bufferMinutes ?? 10,
       p_method: params.method,
+      p_items: (params.items ?? []).map((i) => ({
+        product_id: i.productId,
+        qty: i.qty,
+      })),
     },
   );
 
