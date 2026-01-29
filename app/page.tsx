@@ -545,6 +545,15 @@ function VisitCard({
   const [showLeaveCount, setShowLeaveCount] = useState(false);
   const [leaveCount, setLeaveCount] = useState(1);
 
+  const [showDrink, setShowDrink] = useState(false);
+  const [drinkQty, setDrinkQty] = useState<string>("1");
+
+  const drinkQtyN = useMemo(() => {
+    const n = Math.trunc(Number(drinkQty || 0));
+    if (!Number.isFinite(n)) return 1;
+    return Math.max(1, Math.min(999, n));
+  }, [drinkQty]);
+
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
@@ -648,11 +657,20 @@ function VisitCard({
   const timerLabel = peopleLeft <= 1 ? "ends" : "group ends";
   const drinksOk = v.drinks_collected >= v.pax;
 
-  async function addDrink() {
+  function openDrinkModal() {
     if (busy) return;
+    setDrinkQty("1");
+    setShowDrink(true);
+  }
+
+  async function confirmDrink(qty: number) {
+    if (busy) return;
+    if (qty < 1) return;
+
     setBusy(true);
     try {
-      await rpcCollectDrink({ visitId: v.id, qty: 1 });
+      await rpcCollectDrink({ visitId: v.id, qty });
+      setShowDrink(false);
       await onReload();
     } catch (e: any) {
       alert(e.message ?? "Failed to collect drink");
@@ -780,11 +798,11 @@ function VisitCard({
 
           <div className="mt-3 flex gap-2">
             <button
-              onClick={addDrink}
-              disabled={busy || v.drinks_collected >= v.pax}
+              onClick={openDrinkModal}
+              disabled={busy}
               className="rounded border border-white/20 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
             >
-              +1 drink
+              + Drink
             </button>
 
             <button
@@ -828,6 +846,92 @@ function VisitCard({
           )}
         </div>
       </div>
+
+      {/* DRINK MODAL */}
+      {showDrink && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => !busy && setShowDrink(false)}
+          />
+          <div className="absolute left-1/2 top-1/2 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-white/20 bg-black p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-lg font-semibold">Add drinks</div>
+                <div className="text-sm text-white/60">{v.name}</div>
+              </div>
+              <button
+                disabled={busy}
+                onClick={() => setShowDrink(false)}
+                className="rounded border border-white/20 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div className="text-sm text-white/70">How many drinks?</div>
+
+              <div className="flex flex-wrap gap-2">
+                {[1, 2, 3, 5].map((n) => (
+                  <button
+                    key={n}
+                    disabled={busy}
+                    onClick={() => setDrinkQty(String(n))}
+                    className={`rounded border px-3 py-2 text-sm disabled:opacity-50 ${
+                      drinkQtyN === n
+                        ? "border-white/40 bg-white/10"
+                        : "border-white/20"
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm text-white/70">Custom</div>
+                <input
+                  className="w-28 rounded border border-white/20 bg-black px-3 py-2 text-right text-sm outline-none [appearance:textfield]"
+                  inputMode="numeric"
+                  value={drinkQty}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    // allow empty while typing
+                    if (raw.trim() === "") return setDrinkQty("");
+                    const n = Math.trunc(Number(raw));
+                    if (!Number.isFinite(n)) return;
+                    setDrinkQty(String(Math.max(1, Math.min(999, n))));
+                  }}
+                  onBlur={() => {
+                    // normalize empty -> 1
+                    if (drinkQty.trim() === "") setDrinkQty("1");
+                  }}
+                  disabled={busy}
+                />
+              </div>
+
+              <div className="mt-4 flex gap-2">
+                <button
+                  disabled={busy}
+                  onClick={() => setShowDrink(false)}
+                  className="flex-1 rounded border border-white/20 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  disabled={busy}
+                  onClick={() => confirmDrink(drinkQtyN)}
+                  className="flex-1 rounded border border-white/20 bg-white/5 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+                >
+                  Add {drinkQtyN}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* LEAVE COUNT MODAL */}
       {showLeaveCount && (
